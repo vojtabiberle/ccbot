@@ -4,7 +4,7 @@ Registers all command/callback/message handlers and manages the bot lifecycle.
 Each Telegram topic maps 1:1 to a multiplexer window (Claude session).
 
 Core responsibilities:
-  - Command handlers: /start, /history, /screenshot, /esc, /kill,
+  - Command handlers: /start, /history, /screenshot, /esc, /kill, /bind,
     plus forwarding unknown /commands to Claude Code via the multiplexer.
   - Callback query handler: directory browser, history pagination,
     interactive UI navigation, screenshot refresh.
@@ -69,6 +69,7 @@ from .handlers.callback_data import (
     CB_HISTORY_NEXT,
     CB_HISTORY_PREV,
     CB_SCREENSHOT_REFRESH,
+    CB_BIND_SELECT,
     CB_SUGGESTION_SEND,
 )
 from .handlers.directory_browser import (
@@ -362,6 +363,51 @@ async def pathselect_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data["_pending_thread_id"] = thread_id
         # Keep _pending_thread_text if it was set from the awaiting_path flow
     await safe_reply(update.message, msg_text, reply_markup=keyboard)
+
+
+async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show unbound tmux windows and let the user bind one to this topic."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message or not update.effective_chat:
+        return
+
+    chat_id = update.effective_chat.id
+    thread_id = _get_thread_id(update)
+    if thread_id is None:
+        await safe_reply(update.message, "❌ Use this in a named topic.")
+        return
+
+    wname = session_manager.get_window_for_thread(chat_id, thread_id)
+    if wname:
+        await safe_reply(update.message, f"❌ Topic already bound to window '{wname}'.")
+        return
+
+    await session_manager.load_session_map()
+    windows = await get_mux().list_windows()
+
+    # Filter out windows already bound to a topic in this chat
+    unbound = []
+    for w in windows:
+        if session_manager.get_thread_for_window(chat_id, w.window_name) is None:
+            unbound.append(w)
+
+    if not unbound:
+        await safe_reply(update.message, "No unbound windows available.")
+        return
+
+    buttons = []
+    for w in unbound:
+        label = f"{w.window_name} ({w.cwd})" if w.cwd else w.window_name
+        cb_data = f"{CB_BIND_SELECT}{w.window_name}"[:64]
+        buttons.append([InlineKeyboardButton(label, callback_data=cb_data)])
+
+    await safe_reply(
+        update.message,
+        "Select a window to bind to this topic:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -814,6 +860,45 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer("🔄")
 
+    # Bind existing window to topic
+    elif data.startswith(CB_BIND_SELECT):
+        window_name = data[len(CB_BIND_SELECT):]
+        thread_id = _get_thread_id(update)
+        if thread_id is None:
+            await query.answer("Use this in a named topic", show_alert=True)
+            return
+
+        # Re-check: topic not already bound
+        if session_manager.get_window_for_thread(chat_id, thread_id):
+            await safe_edit(query, "❌ Topic is already bound to a window.")
+            await query.answer()
+            return
+
+        # Re-check: window still exists
+        w = await get_mux().find_window_by_name(window_name)
+        if not w:
+            await safe_edit(query, f"❌ Window '{window_name}' no longer exists.")
+            await query.answer()
+            return
+
+        # Re-check: window not bound to another topic in this chat
+        if session_manager.get_thread_for_window(chat_id, window_name) is not None:
+            await safe_edit(query, f"❌ Window '{window_name}' is already bound to another topic.")
+            await query.answer()
+            return
+
+        session_manager.bind_thread(chat_id, thread_id, window_name)
+        try:
+            await context.bot.edit_forum_topic(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                name=window_name,
+            )
+        except Exception as e:
+            logger.debug("Failed to rename topic: %s", e)
+        await safe_edit(query, f"✅ Bound to window '{window_name}'.")
+        await query.answer("Bound")
+
     # Suggestion prompt: Send
     elif data.startswith(CB_SUGGESTION_SEND):
         window_name = data[len(CB_SUGGESTION_SEND):]
@@ -928,6 +1013,7 @@ async def post_init(application: Application) -> None:
         BotCommand("esc", "Send Escape to interrupt Claude"),
         BotCommand("kill", "Kill session and delete topic"),
         BotCommand("pathselect", "Browse directories for new session"),
+        BotCommand("bind", "Bind existing window to this topic"),
     ]
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
@@ -985,6 +1071,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("screenshot", screenshot_command))
     application.add_handler(CommandHandler("esc", esc_command))
     application.add_handler(CommandHandler("pathselect", pathselect_command))
+    application.add_handler(CommandHandler("bind", bind_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(MessageHandler(

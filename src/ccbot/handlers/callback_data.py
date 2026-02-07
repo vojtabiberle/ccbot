@@ -8,6 +8,7 @@ Constants:
   - CB_DIR_*: Directory browser navigation
   - CB_SCREENSHOT_*: Screenshot refresh
   - CB_ASK_*: Interactive UI navigation (arrows, enter, esc)
+  - CB_BIND_*: Bind existing window to topic
 """
 
 # History pagination
@@ -36,4 +37,7 @@ CB_ASK_OPTION = "aq:opt:"  # aq:opt:<index>:<window>
 
 # Suggestion prompt
 CB_SUGGESTION_SEND = "sg:send:"  # sg:send:<window_name>
+
+# Bind existing window
+CB_BIND_SELECT = "bd:sel:"  # bd:sel:<window_name>
 
