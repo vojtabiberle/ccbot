@@ -83,7 +83,7 @@ cp .env.example .env
 Auto-install via CLI:
 
 ```bash
-ccbot hook --install
+uv run ccbot hook --install
 ```
 
 Or manually add to `~/.claude/settings.json`:
