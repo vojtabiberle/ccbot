@@ -28,6 +28,7 @@ from ..terminal_parser import is_interactive_ui, parse_status_line
 from ..multiplexer import get_mux
 from .interactive_ui import (
     clear_interactive_msg,
+    get_interactive_msg_id,
     get_interactive_window,
     handle_interactive_ui,
 )
@@ -71,6 +72,11 @@ async def update_status_message(
     if interactive_window == window_name:
         # Chat is in interactive mode for THIS window
         if is_interactive_ui(pane_text):
+            # If interactive mode is set but no message sent yet, the JSONL
+            # handler is still processing (sleeping before capture).  Skip
+            # this cycle to avoid sending a duplicate message.
+            if not get_interactive_msg_id(chat_id, thread_id):
+                return
             # Interactive UI still showing — refresh in case content changed
             # (e.g. multi-question AskUserQuestion advancing to next question)
             await handle_interactive_ui(bot, chat_id, window_name, thread_id)
