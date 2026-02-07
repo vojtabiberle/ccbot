@@ -145,6 +145,18 @@ PANE_PERMISSION_PROMPT = """\
   Esc to cancel
 """
 
+PANE_PERMISSION_PROMPT_V2 = """\
+──────────────────── Edit file ────────────────────
+  Do you want to make this edit to src/config.py?
+
+  ❯ 1. Yes
+    2. Yes, allow all edits in project/ during this session (shift+tab)
+    3. No
+
+  Enter confirm · Esc cancel
+───────────────────────────────────────────────────
+"""
+
 PANE_RESTORE_CHECKPOINT = """\
   Restore the code to this checkpoint?
 

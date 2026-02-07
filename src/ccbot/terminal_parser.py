@@ -68,8 +68,11 @@ UI_PATTERNS: list[UIPattern] = [
     ),
     UIPattern(
         name="PermissionPrompt",
-        top=(re.compile(r"^\s*Do you want to proceed\?"),),
-        bottom=(re.compile(r"^\s*Esc to cancel"),),
+        top=(re.compile(r"^\s*Do you want to"),),
+        bottom=(
+            re.compile(r"Enter confirm .* Esc cancel"),
+            re.compile(r"^\s*Esc to cancel"),  # legacy format
+        ),
     ),
     UIPattern(
         name="RestoreCheckpoint",

@@ -11,6 +11,7 @@ from conftest import (
     PANE_EXIT_PLAN_MODE,
     PANE_EXIT_PLAN_MODE_V2,
     PANE_PERMISSION_PROMPT,
+    PANE_PERMISSION_PROMPT_V2,
     PANE_PLAIN_TEXT,
     PANE_RESTORE_CHECKPOINT,
     PANE_STATUS_DOT,
@@ -33,6 +34,9 @@ class TestIsInteractiveUI:
 
     def test_permission_prompt(self):
         assert is_interactive_ui(PANE_PERMISSION_PROMPT) is True
+
+    def test_permission_prompt_v2(self):
+        assert is_interactive_ui(PANE_PERMISSION_PROMPT_V2) is True
 
     def test_restore_checkpoint(self):
         assert is_interactive_ui(PANE_RESTORE_CHECKPOINT) is True
@@ -62,6 +66,12 @@ class TestExtractInteractiveContent:
         assert result is not None
         assert result.name == "PermissionPrompt"
         assert "rm -rf" in result.content
+
+    def test_permission_v2_content_and_name(self):
+        result = extract_interactive_content(PANE_PERMISSION_PROMPT_V2)
+        assert result is not None
+        assert result.name == "PermissionPrompt"
+        assert "src/config.py" in result.content
 
     def test_empty_pane_none(self):
         assert extract_interactive_content("") is None
