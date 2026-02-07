@@ -38,7 +38,7 @@ from telegram import (
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaDocument,
+    InputMediaPhoto,
     Update,
 )
 from telegram.constants import ChatAction
@@ -57,6 +57,7 @@ from .handlers.callback_data import (
     CB_ASK_ENTER,
     CB_ASK_ESC,
     CB_ASK_LEFT,
+    CB_ASK_OPTION,
     CB_ASK_REFRESH,
     CB_ASK_RIGHT,
     CB_ASK_UP,
@@ -73,6 +74,7 @@ from .handlers.directory_browser import (
     BROWSE_DIRS_KEY,
     BROWSE_PAGE_KEY,
     BROWSE_PATH_KEY,
+    STATE_AWAITING_PATH,
     STATE_BROWSING_DIRECTORY,
     STATE_KEY,
     build_directory_browser,
@@ -207,9 +209,8 @@ async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     refresh_keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("🔄 Refresh", callback_data=f"{CB_SCREENSHOT_REFRESH}{wname}"[:64]),
     ]])
-    await update.message.reply_document(
-        document=io.BytesIO(png_bytes),
-        filename="screenshot.png",
+    await update.message.reply_photo(
+        photo=io.BytesIO(png_bytes),
         reply_markup=refresh_keyboard,
     )
 
@@ -327,6 +328,37 @@ async def unsupported_content_handler(
     )
 
 
+async def pathselect_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show directory browser for selecting working directory."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message or not update.effective_chat:
+        return
+
+    chat_id = update.effective_chat.id
+    thread_id = _get_thread_id(update)
+    if thread_id is None:
+        await safe_reply(update.message, "❌ Use this in a named topic.")
+        return
+
+    wname = session_manager.get_window_for_thread(chat_id, thread_id)
+    if wname:
+        await safe_reply(update.message, f"❌ Topic already bound to window '{wname}'.")
+        return
+
+    start_path = config.browse_start_path or str(Path.cwd())
+    msg_text, keyboard, subdirs = build_directory_browser(start_path)
+    if context.user_data is not None:
+        context.user_data[STATE_KEY] = STATE_BROWSING_DIRECTORY
+        context.user_data[BROWSE_PATH_KEY] = start_path
+        context.user_data[BROWSE_PAGE_KEY] = 0
+        context.user_data[BROWSE_DIRS_KEY] = subdirs
+        context.user_data["_pending_thread_id"] = thread_id
+        # Keep _pending_thread_text if it was set from the awaiting_path flow
+    await safe_reply(update.message, msg_text, reply_markup=keyboard)
+
+
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or not is_user_allowed(user.id):
@@ -349,6 +381,53 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
+    # Handle path input for awaiting-path state
+    if context.user_data and context.user_data.get(STATE_KEY) == STATE_AWAITING_PATH:
+        pending_thread_id = context.user_data.get("_pending_thread_id")
+        pending_text = context.user_data.get("_pending_thread_text")
+        # Clear state
+        context.user_data.pop(STATE_KEY, None)
+
+        selected_path = text.strip()
+        if selected_path.startswith("~"):
+            selected_path = str(Path(selected_path).expanduser())
+
+        if not Path(selected_path).is_dir():
+            await safe_reply(update.message, f"❌ Not a valid directory: {selected_path}")
+            return
+
+        success, message, created_wname = await get_mux().create_window(selected_path)
+        if success:
+            old_state = session_manager.window_states.get(created_wname)
+            old_sid = old_state.session_id if old_state else None
+            await session_manager.wait_for_session_map_entry(
+                created_wname, exclude_session_id=old_sid,
+            )
+            if pending_thread_id is not None:
+                session_manager.bind_thread(chat_id, pending_thread_id, created_wname)
+                try:
+                    await context.bot.edit_forum_topic(
+                        chat_id=chat_id, message_thread_id=pending_thread_id, name=created_wname,
+                    )
+                except Exception as e:
+                    logger.debug("Failed to rename topic: %s", e)
+            await safe_reply(update.message, f"✅ {message}\n\nBound to this topic.")
+            # Forward pending text
+            if pending_text:
+                context.user_data.pop("_pending_thread_text", None)
+                context.user_data.pop("_pending_thread_id", None)
+                send_ok, send_msg = await session_manager.send_to_window(created_wname, pending_text)
+                if not send_ok:
+                    await safe_reply(update.message, f"❌ Failed to send: {send_msg}")
+            elif context.user_data is not None:
+                context.user_data.pop("_pending_thread_id", None)
+        else:
+            await safe_reply(update.message, f"❌ {message}")
+            if context.user_data is not None:
+                context.user_data.pop("_pending_thread_id", None)
+                context.user_data.pop("_pending_thread_text", None)
+        return
+
     # Must be in a named topic
     if thread_id is None:
         await safe_reply(
@@ -359,18 +438,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     wname = session_manager.get_window_for_thread(chat_id, thread_id)
     if wname is None:
-        # Unbound topic — show directory browser to create a new session
-        logger.info("Unbound topic: showing directory browser (chat=%d, thread=%d)", chat_id, thread_id)
-        start_path = str(Path.cwd())
-        msg_text, keyboard, subdirs = build_directory_browser(start_path)
+        # Unbound topic — prompt user for working directory
+        logger.info("Unbound topic: prompting for path (chat=%d, thread=%d)", chat_id, thread_id)
         if context.user_data is not None:
-            context.user_data[STATE_KEY] = STATE_BROWSING_DIRECTORY
-            context.user_data[BROWSE_PATH_KEY] = start_path
-            context.user_data[BROWSE_PAGE_KEY] = 0
-            context.user_data[BROWSE_DIRS_KEY] = subdirs
+            context.user_data[STATE_KEY] = STATE_AWAITING_PATH
             context.user_data["_pending_thread_id"] = thread_id
             context.user_data["_pending_thread_text"] = text
-        await safe_reply(update.message, msg_text, reply_markup=keyboard)
+        await safe_reply(
+            update.message,
+            "📂 Send a working directory path, or use /pathselect for the directory browser.",
+        )
         return
 
     # Bound topic — forward to bound window
@@ -623,7 +700,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ]])
         try:
             await query.edit_message_media(
-                media=InputMediaDocument(media=io.BytesIO(png_bytes), filename="screenshot.png"),
+                media=InputMediaPhoto(media=io.BytesIO(png_bytes)),
                 reply_markup=refresh_keyboard,
             )
             await query.answer("Refreshed")
@@ -633,6 +710,29 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     elif data == "noop":
         await query.answer()
+
+    # Interactive UI: Option selection (labeled buttons)
+    elif data.startswith(CB_ASK_OPTION):
+        rest = data[len(CB_ASK_OPTION):]
+        idx_str, window_name = rest.split(":", 1)
+        target_idx = int(idx_str)
+        thread_id = _get_thread_id(update)
+        w = await get_mux().find_window_by_name(window_name)
+        if w:
+            # Navigate to top first (enough Ups to reach first option)
+            for _ in range(10):
+                await get_mux().send_keys(w.window_id, "Up", enter=False, literal=False)
+                await asyncio.sleep(0.02)
+            # Navigate down to the target option
+            for _ in range(target_idx):
+                await get_mux().send_keys(w.window_id, "Down", enter=False, literal=False)
+                await asyncio.sleep(0.02)
+            await asyncio.sleep(0.1)
+            await get_mux().send_keys(w.window_id, "Enter", enter=False, literal=False)
+            await asyncio.sleep(0.2)
+            # Check if another interactive UI appeared (multi-question)
+            await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
+        await query.answer("Selected")
 
     # Interactive UI: Up arrow
     elif data.startswith(CB_ASK_UP):
@@ -759,6 +859,12 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
         if get_interactive_msg_id(chat_id, thread_id):
             await clear_interactive_msg(chat_id, bot, thread_id)
 
+        # In interactive notify mode, skip non-interactive messages.
+        # Interactive tools (AskUserQuestion, ExitPlanMode) are already handled
+        # above. Permission prompts are handled via status polling independently.
+        if config.notify_mode == "interactive":
+            continue
+
         parts = build_response_parts(
             msg.text, msg.is_complete, msg.content_type, msg.role,
         )
@@ -803,6 +909,7 @@ async def post_init(application: Application) -> None:
         BotCommand("screenshot", "Capture terminal screenshot"),
         BotCommand("esc", "Send Escape to interrupt Claude"),
         BotCommand("kill", "Kill session and delete topic"),
+        BotCommand("pathselect", "Browse directories for new session"),
     ]
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
@@ -859,6 +966,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("screenshot", screenshot_command))
     application.add_handler(CommandHandler("esc", esc_command))
+    application.add_handler(CommandHandler("pathselect", pathselect_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(MessageHandler(

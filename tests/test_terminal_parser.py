@@ -3,6 +3,7 @@
 from ccbot.terminal_parser import (
     extract_interactive_content,
     is_interactive_ui,
+    parse_options,
     parse_status_line,
 )
 
@@ -143,3 +144,67 @@ class TestParseStatusLine:
         pane = "\n".join(lines)
         result = parse_status_line(pane)
         assert result is None
+
+
+# ── parse_options ──────────────────────────────────────────────────────
+
+
+class TestParseOptions:
+    def test_checkbox_options(self):
+        content = "  ☐ Option A\n  ☐ Option B\n  ☐ Option C (Recommended)"
+        assert parse_options(content) == [
+            "Option A", "Option B", "Option C (Recommended)",
+        ]
+
+    def test_checked_checkbox(self):
+        content = "  ☑ Selected\n  ☐ Not selected"
+        assert parse_options(content) == ["Selected", "Not selected"]
+
+    def test_checkmark(self):
+        content = "  ✓ Done item\n  ☐ Pending item"
+        assert parse_options(content) == ["Done item", "Pending item"]
+
+    def test_numbered_options(self):
+        content = "  ❯ 1. Yes\n    2. No\n    3. Maybe"
+        assert parse_options(content) == ["Yes", "No", "Maybe"]
+
+    def test_numbered_without_arrow(self):
+        content = "  1. First option\n  2. Second option"
+        assert parse_options(content) == ["First option", "Second option"]
+
+    def test_permission_prompt_v2(self):
+        content = (
+            "  Do you want to make this edit to src/config.py?\n"
+            "\n"
+            "  ❯ 1. Yes\n"
+            "    2. Yes, allow all edits in project/ during this session (shift+tab)\n"
+            "    3. No\n"
+            "\n"
+            "  Enter confirm · Esc cancel"
+        )
+        assert parse_options(content) == [
+            "Yes",
+            "Yes, allow all edits in project/ during this session (shift+tab)",
+            "No",
+        ]
+
+    def test_no_options(self):
+        content = "Just some text\nwith no options"
+        assert parse_options(content) == []
+
+    def test_empty_string(self):
+        assert parse_options("") == []
+
+    def test_mixed_ignored(self):
+        # Lines that don't match any pattern are skipped
+        content = "Question text\n  ☐ Option A\nMore text\n  ☐ Option B"
+        assert parse_options(content) == ["Option A", "Option B"]
+
+    def test_ask_user_question_pane(self):
+        result = parse_options(PANE_ASK_USER_QUESTION)
+        assert result == ["Option A", "Option B", "Option C (Recommended)"]
+
+    def test_permission_prompt_v2_pane(self):
+        result = parse_options(PANE_PERMISSION_PROMPT_V2)
+        assert "Yes" in result
+        assert "No" in result

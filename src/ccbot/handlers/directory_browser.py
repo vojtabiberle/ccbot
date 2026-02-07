@@ -24,6 +24,7 @@ DIRS_PER_PAGE = 6
 # User state keys
 STATE_KEY = "state"
 STATE_BROWSING_DIRECTORY = "browsing_directory"
+STATE_AWAITING_PATH = "awaiting_path"
 BROWSE_PATH_KEY = "browse_path"
 BROWSE_PAGE_KEY = "browse_page"
 BROWSE_DIRS_KEY = "browse_dirs"  # Cache of subdirs for current path

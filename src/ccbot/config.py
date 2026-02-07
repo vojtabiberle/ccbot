@@ -1,8 +1,9 @@
 """Application configuration — reads env vars and exposes a singleton.
 
 Loads TELEGRAM_BOT_TOKEN, ALLOWED_USERS, multiplexer backend selection,
-session naming, Claude paths, and monitoring intervals from environment
-variables (with .env support).
+session naming, Claude paths, monitoring intervals, NOTIFY_MODE,
+SHOW_USER_MESSAGES, and BROWSE_START_PATH from environment variables
+(with .env support).
 The module-level `config` instance is imported by nearly every other module.
 
 Key class: Config (singleton instantiated as `config`).
@@ -70,7 +71,15 @@ class Config:
 
         # Display user messages in history and real-time notifications
         # When True, user messages are shown with a 👤 prefix
-        self.show_user_messages = True
+        self.show_user_messages: bool = os.getenv(
+            "SHOW_USER_MESSAGES", "true",
+        ).lower() in ("true", "1", "yes")
+
+        # Notification mode: "all" (default) or "interactive" (only questions/permissions)
+        self.notify_mode: str = os.getenv("NOTIFY_MODE", "all").lower()
+
+        # Starting path for /pathselect directory browser (default: bot cwd)
+        self.browse_start_path: str = os.getenv("BROWSE_START_PATH", "")
 
         logger.debug(
             "Config initialized: token=%s..., allowed_users=%d, "

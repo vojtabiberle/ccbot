@@ -149,6 +149,28 @@ def is_interactive_ui(pane_text: str) -> bool:
 STATUS_SPINNERS = frozenset(["·", "✻", "✽", "✶", "✳", "✢"])
 
 
+_RE_CHECKBOX = re.compile(r"^\s*[☐☑✓]\s+(.+)")
+_RE_NUMBERED = re.compile(r"^\s*(?:❯\s*)?\d+\.\s+(.+)")
+
+
+def parse_options(content: str) -> list[str]:
+    """Parse option labels from interactive UI content.
+
+    Recognizes:
+      - ☐ Option A / ☑ Option A  (AskUserQuestion checkboxes)
+      - ❯ 1. Yes / 2. No         (PermissionPrompt/ExitPlanMode numbered)
+    Returns list of option labels, or empty list if none found.
+    """
+    options: list[str] = []
+    for line in content.split("\n"):
+        m = _RE_NUMBERED.match(line) or _RE_CHECKBOX.match(line)
+        if m:
+            label = m.group(1).strip()
+            if label:
+                options.append(label)
+    return options
+
+
 def parse_status_line(pane_text: str) -> str | None:
     """Extract the Claude Code status line from terminal output.
 

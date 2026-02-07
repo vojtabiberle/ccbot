@@ -18,13 +18,14 @@ import logging
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
-from ..terminal_parser import extract_interactive_content, is_interactive_ui
+from ..terminal_parser import extract_interactive_content, is_interactive_ui, parse_options
 from ..multiplexer import get_mux
 from .callback_data import (
     CB_ASK_DOWN,
     CB_ASK_ENTER,
     CB_ASK_ESC,
     CB_ASK_LEFT,
+    CB_ASK_OPTION,
     CB_ASK_REFRESH,
     CB_ASK_RIGHT,
     CB_ASK_UP,
@@ -71,36 +72,48 @@ def get_interactive_msg_id(chat_id: int, thread_id: int | None = None) -> int | 
 
 
 def _build_interactive_keyboard(
-    window_name: str, ui_name: str = "",
+    window_name: str, ui_name: str = "", options: list[str] | None = None,
 ) -> InlineKeyboardMarkup:
     """Build keyboard for interactive UI navigation.
 
-    ``ui_name`` controls the layout: ``RestoreCheckpoint`` omits ←/→ keys
-    since only vertical selection is needed.
-    """
-    vertical_only = ui_name == "RestoreCheckpoint"
+    When ``options`` are provided, each option gets a labeled button that
+    navigates to that option and presses Enter.  Otherwise falls back to
+    generic arrow-key navigation.
 
+    ``ui_name`` controls the fallback layout: ``RestoreCheckpoint`` omits
+    ←/→ keys since only vertical selection is needed.
+    """
     rows: list[list[InlineKeyboardButton]] = []
-    # Row 1: directional keys
-    rows.append([
-        InlineKeyboardButton("↑", callback_data=f"{CB_ASK_UP}{window_name}"[:64]),
-    ])
-    if vertical_only:
+
+    if options:
+        for i, label in enumerate(options):
+            cb_data = f"{CB_ASK_OPTION}{i}:{window_name}"[:64]
+            rows.append([InlineKeyboardButton(label, callback_data=cb_data)])
         rows.append([
-            InlineKeyboardButton("↓", callback_data=f"{CB_ASK_DOWN}{window_name}"[:64]),
+            InlineKeyboardButton("⎋ Esc", callback_data=f"{CB_ASK_ESC}{window_name}"[:64]),
+            InlineKeyboardButton("🔄", callback_data=f"{CB_ASK_REFRESH}{window_name}"[:64]),
         ])
     else:
+        vertical_only = ui_name == "RestoreCheckpoint"
         rows.append([
-            InlineKeyboardButton("←", callback_data=f"{CB_ASK_LEFT}{window_name}"[:64]),
-            InlineKeyboardButton("↓", callback_data=f"{CB_ASK_DOWN}{window_name}"[:64]),
-            InlineKeyboardButton("→", callback_data=f"{CB_ASK_RIGHT}{window_name}"[:64]),
+            InlineKeyboardButton("↑", callback_data=f"{CB_ASK_UP}{window_name}"[:64]),
         ])
-    # Row 2: action keys
-    rows.append([
-        InlineKeyboardButton("⎋ Esc", callback_data=f"{CB_ASK_ESC}{window_name}"[:64]),
-        InlineKeyboardButton("🔄", callback_data=f"{CB_ASK_REFRESH}{window_name}"[:64]),
-        InlineKeyboardButton("⏎ Enter", callback_data=f"{CB_ASK_ENTER}{window_name}"[:64]),
-    ])
+        if vertical_only:
+            rows.append([
+                InlineKeyboardButton("↓", callback_data=f"{CB_ASK_DOWN}{window_name}"[:64]),
+            ])
+        else:
+            rows.append([
+                InlineKeyboardButton("←", callback_data=f"{CB_ASK_LEFT}{window_name}"[:64]),
+                InlineKeyboardButton("↓", callback_data=f"{CB_ASK_DOWN}{window_name}"[:64]),
+                InlineKeyboardButton("→", callback_data=f"{CB_ASK_RIGHT}{window_name}"[:64]),
+            ])
+        rows.append([
+            InlineKeyboardButton("⎋ Esc", callback_data=f"{CB_ASK_ESC}{window_name}"[:64]),
+            InlineKeyboardButton("🔄", callback_data=f"{CB_ASK_REFRESH}{window_name}"[:64]),
+            InlineKeyboardButton("⏎ Enter", callback_data=f"{CB_ASK_ENTER}{window_name}"[:64]),
+        ])
+
     return InlineKeyboardMarkup(rows)
 
 
@@ -141,8 +154,9 @@ async def handle_interactive_ui(
     if not content:
         return False
 
-    # Build message with navigation keyboard
-    keyboard = _build_interactive_keyboard(window_name, ui_name=content.name)
+    # Build message with navigation keyboard (use parsed option labels if available)
+    options = parse_options(content.content)
+    keyboard = _build_interactive_keyboard(window_name, ui_name=content.name, options=options)
 
     # Send as plain text (no markdown conversion)
     text = content.content
