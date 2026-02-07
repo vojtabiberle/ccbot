@@ -4,7 +4,7 @@ Registers all command/callback/message handlers and manages the bot lifecycle.
 Each Telegram topic maps 1:1 to a multiplexer window (Claude session).
 
 Core responsibilities:
-  - Command handlers: /start, /history, /screenshot, /esc, /kill, /bind,
+  - Command handlers: /start, /history, /screenshot, /esc, /kill, /bind, /unbind,
     plus forwarding unknown /commands to Claude Code via the multiplexer.
   - Callback query handler: directory browser, history pagination,
     interactive UI navigation, screenshot refresh.
@@ -408,6 +408,30 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Select a window to bind to this topic:",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
+
+
+async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Unbind this topic from its window without killing the window."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message or not update.effective_chat:
+        return
+
+    chat_id = update.effective_chat.id
+    thread_id = _get_thread_id(update)
+    if thread_id is None:
+        await safe_reply(update.message, "❌ Use this in a named topic.")
+        return
+
+    wname = session_manager.get_window_for_thread(chat_id, thread_id)
+    if not wname:
+        await safe_reply(update.message, "❌ No session bound to this topic.")
+        return
+
+    session_manager.unbind_thread(chat_id, thread_id)
+    await clear_topic_state(chat_id, thread_id, context.bot, context.user_data)
+    await safe_reply(update.message, f"✅ Unbound from window '{wname}'. Window is still running.")
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1014,6 +1038,7 @@ async def post_init(application: Application) -> None:
         BotCommand("kill", "Kill session and delete topic"),
         BotCommand("pathselect", "Browse directories for new session"),
         BotCommand("bind", "Bind existing window to this topic"),
+        BotCommand("unbind", "Unbind window without killing it"),
     ]
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
@@ -1072,6 +1097,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("esc", esc_command))
     application.add_handler(CommandHandler("pathselect", pathselect_command))
     application.add_handler(CommandHandler("bind", bind_command))
+    application.add_handler(CommandHandler("unbind", unbind_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(MessageHandler(
