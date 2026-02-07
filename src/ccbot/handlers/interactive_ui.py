@@ -19,7 +19,7 @@ import logging
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..terminal_parser import extract_interactive_content, is_interactive_ui
-from ..tmux_manager import tmux_manager
+from ..multiplexer import get_mux
 from .callback_data import (
     CB_ASK_DOWN,
     CB_ASK_ENTER,
@@ -114,12 +114,12 @@ async def handle_interactive_ui(
     False otherwise.
     """
     ikey = (user_id, thread_id or 0)
-    w = await tmux_manager.find_window_by_name(window_name)
+    w = await get_mux().find_window_by_name(window_name)
     if not w:
         return False
 
     # Capture plain text (no ANSI colors)
-    pane_text = await tmux_manager.capture_pane(w.window_id)
+    pane_text = await get_mux().capture_pane(w.window_id)
     if not pane_text:
         logger.debug("No pane text captured for window %s", window_name)
         return False

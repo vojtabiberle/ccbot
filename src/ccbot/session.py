@@ -32,7 +32,7 @@ from typing import Any
 import aiofiles
 
 from .config import config
-from .tmux_manager import tmux_manager
+from .multiplexer import get_mux
 from .transcript_parser import TranscriptParser
 from .utils import atomic_write_json
 
@@ -490,10 +490,10 @@ class SessionManager:
     async def send_to_window(self, window_name: str, text: str) -> tuple[bool, str]:
         """Send text to a tmux window by name and record for matching."""
         logger.debug("send_to_window: window=%s, text_len=%d", window_name, len(text))
-        window = await tmux_manager.find_window_by_name(window_name)
+        window = await get_mux().find_window_by_name(window_name)
         if not window:
             return False, "Window not found (may have been closed)"
-        success = await tmux_manager.send_keys(window.window_id, text)
+        success = await get_mux().send_keys(window.window_id, text)
         if success:
             return True, f"Sent to {window_name}"
         return False, "Failed to send keys"

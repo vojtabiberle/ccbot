@@ -1,7 +1,8 @@
 """Application configuration — reads env vars and exposes a singleton.
 
-Loads TELEGRAM_BOT_TOKEN, ALLOWED_USERS, tmux/Claude paths, and
-monitoring intervals from environment variables (with .env support).
+Loads TELEGRAM_BOT_TOKEN, ALLOWED_USERS, multiplexer backend selection,
+session naming, Claude paths, and monitoring intervals from environment
+variables (with .env support).
 The module-level `config` instance is imported by nearly every other module.
 
 Key class: Config (singleton instantiated as `config`).
@@ -39,9 +40,19 @@ class Config:
                 "Expected comma-separated Telegram user IDs."
             ) from e
 
-        # Tmux session name and window naming
-        self.tmux_session_name = os.getenv("TMUX_SESSION_NAME", "ccbot")
-        self.tmux_main_window_name = "__main__"
+        # Multiplexer backend selection (default: tmux for backward compat)
+        self.multiplexer_backend: str = os.getenv("MULTIPLEXER", "tmux").lower()
+
+        # Unified session naming (TMUX_SESSION_NAME still works as fallback)
+        self.mux_session_name: str = os.getenv(
+            "MUX_SESSION_NAME",
+            os.getenv("TMUX_SESSION_NAME", "ccbot"),
+        )
+        self.mux_main_window_name: str = "__main__"
+
+        # Keep old names as aliases for backward compatibility
+        self.tmux_session_name = self.mux_session_name
+        self.tmux_main_window_name = self.mux_main_window_name
 
         # Claude command to run in new windows
         self.claude_command = os.getenv("CLAUDE_COMMAND", "claude")
@@ -63,10 +74,11 @@ class Config:
 
         logger.debug(
             "Config initialized: token=%s..., allowed_users=%d, "
-            "tmux_session=%s, state=%s",
+            "multiplexer=%s, session=%s, state=%s",
             self.telegram_bot_token[:8],
             len(self.allowed_users),
-            self.tmux_session_name,
+            self.multiplexer_backend,
+            self.mux_session_name,
             self.state_file,
         )
 

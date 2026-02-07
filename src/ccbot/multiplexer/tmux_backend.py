@@ -1,4 +1,4 @@
-"""Tmux session/window management via libtmux.
+"""Tmux backend for the multiplexer abstraction.
 
 Wraps libtmux to provide async-friendly operations on a single tmux session:
   - list_windows / find_window_by_name: discover Claude Code windows.
@@ -8,42 +8,28 @@ Wraps libtmux to provide async-friendly operations on a single tmux session:
 
 All blocking libtmux calls are wrapped in asyncio.to_thread().
 
-Key class: TmuxManager (singleton instantiated as `tmux_manager`).
+Key class: TmuxBackend(MultiplexerBackend).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 
 import libtmux
 
-from .config import config
+from ..config import config
+from .base import MultiplexerBackend, MuxWindow
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class TmuxWindow:
-    """Information about a tmux window."""
-
-    window_id: str
-    window_name: str
-    cwd: str  # Current working directory
-
-
-class TmuxManager:
+class TmuxBackend(MultiplexerBackend):
     """Manages tmux windows for Claude Code sessions."""
 
-    def __init__(self, session_name: str | None = None):
-        """Initialize tmux manager.
-
-        Args:
-            session_name: Name of the tmux session to use (default from config)
-        """
-        self.session_name = session_name or config.tmux_session_name
+    def __init__(self, session_name: str, main_window_name: str) -> None:
+        super().__init__(session_name, main_window_name)
         self._server: libtmux.Server | None = None
 
     @property
@@ -60,11 +46,11 @@ class TmuxManager:
         except Exception:
             return None
 
-    def get_or_create_session(self) -> libtmux.Session:
+    def get_or_create_session(self) -> None:
         """Get existing session or create a new one."""
         session = self.get_session()
         if session:
-            return session
+            return
 
         # Create new session with main window named specifically
         session = self.server.new_session(
@@ -73,16 +59,12 @@ class TmuxManager:
         )
         # Rename the default window to the main window name
         if session.windows:
-            session.windows[0].rename_window(config.tmux_main_window_name)
-        return session
+            session.windows[0].rename_window(self.main_window_name)
 
-    async def list_windows(self) -> list[TmuxWindow]:
-        """List all windows in the session with their working directories.
+    async def list_windows(self) -> list[MuxWindow]:
+        """List all windows in the session with their working directories."""
 
-        Returns:
-            List of TmuxWindow with window info and cwd
-        """
-        def _sync_list_windows() -> list[TmuxWindow]:
+        def _sync_list_windows() -> list[MuxWindow]:
             windows = []
             session = self.get_session()
 
@@ -92,7 +74,7 @@ class TmuxManager:
             for window in session.windows:
                 name = window.window_name or ""
                 # Skip the main window (placeholder window)
-                if name == config.tmux_main_window_name:
+                if name == self.main_window_name:
                     continue
                 try:
                     # Get the active pane's current path
@@ -103,7 +85,7 @@ class TmuxManager:
                         cwd = ""
 
                     windows.append(
-                        TmuxWindow(
+                        MuxWindow(
                             window_id=window.window_id or "",
                             window_name=window.window_name or "",
                             cwd=cwd,
@@ -116,33 +98,8 @@ class TmuxManager:
 
         return await asyncio.to_thread(_sync_list_windows)
 
-    async def find_window_by_name(self, window_name: str) -> TmuxWindow | None:
-        """Find a window by its name.
-
-        Args:
-            window_name: The window name to match
-
-        Returns:
-            TmuxWindow if found, None otherwise
-        """
-        windows = await self.list_windows()
-        for window in windows:
-            if window.window_name == window_name:
-                return window
-        logger.debug("Window not found: %s", window_name)
-        return None
-
-
     async def capture_pane(self, window_id: str, with_ansi: bool = False) -> str | None:
-        """Capture the visible text content of a window's active pane.
-
-        Args:
-            window_id: The window ID to capture
-            with_ansi: If True, capture with ANSI color codes
-
-        Returns:
-            The captured text, or None on failure.
-        """
+        """Capture the visible text content of a window's active pane."""
         if with_ansi:
             # Use async subprocess to call tmux capture-pane -e for ANSI colors
             try:
@@ -181,20 +138,9 @@ class TmuxManager:
         return await asyncio.to_thread(_sync_capture)
 
     async def send_keys(
-        self, window_id: str, text: str, enter: bool = True, literal: bool = True
+        self, window_id: str, text: str, enter: bool = True, literal: bool = True,
     ) -> bool:
-        """Send keys to a specific window.
-
-        Args:
-            window_id: The window ID to send to
-            text: Text to send
-            enter: Whether to press enter after the text
-            literal: If True, send text literally. If False, interpret special keys
-                     like "Up", "Down", "Left", "Right", "Escape", "Enter".
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Send keys to a specific window."""
         if literal and enter:
             # Split into text + delay + Enter via libtmux.
             # Claude Code's TUI sometimes interprets a rapid-fire Enter
@@ -272,6 +218,7 @@ class TmuxManager:
 
     async def kill_window(self, window_id: str) -> bool:
         """Kill a tmux window by its ID."""
+
         def _sync_kill() -> bool:
             session = self.get_session()
             if not session:
@@ -295,16 +242,7 @@ class TmuxManager:
         window_name: str | None = None,
         start_claude: bool = True,
     ) -> tuple[bool, str, str]:
-        """Create a new tmux window and optionally start Claude Code.
-
-        Args:
-            work_dir: Working directory for the new window
-            window_name: Optional window name (defaults to directory name)
-            start_claude: Whether to start claude command
-
-        Returns:
-            Tuple of (success, message, window_name)
-        """
+        """Create a new tmux window and optionally start Claude Code."""
         # Validate directory first
         path = Path(work_dir).expanduser().resolve()
         if not path.exists():
@@ -324,7 +262,13 @@ class TmuxManager:
 
         # Create window in thread
         def _create_and_start() -> tuple[bool, str, str]:
-            session = self.get_or_create_session()
+            session = self.get_session()
+            if not session:
+                # Ensure session exists
+                self.get_or_create_session()
+                session = self.get_session()
+            if not session:
+                return False, "Failed to get or create tmux session", ""
             try:
                 # Create new window
                 window = session.new_window(
@@ -346,7 +290,3 @@ class TmuxManager:
                 return False, f"Failed to create window: {e}", ""
 
         return await asyncio.to_thread(_create_and_start)
-
-
-# Global instance with default session name
-tmux_manager = TmuxManager()

@@ -24,7 +24,7 @@ import aiofiles
 
 from .config import config
 from .monitor_state import MonitorState, TrackedSession
-from .tmux_manager import tmux_manager
+from .multiplexer import get_mux
 from .transcript_parser import TranscriptParser
 from .utils import read_cwd_from_jsonl
 
@@ -91,7 +91,7 @@ class SessionMonitor:
     async def _get_active_cwds(self) -> set[str]:
         """Get normalized cwds of all active tmux windows."""
         cwds = set()
-        windows = await tmux_manager.list_windows()
+        windows = await get_mux().list_windows()
         for w in windows:
             try:
                 cwds.add(str(Path(w.cwd).resolve()))

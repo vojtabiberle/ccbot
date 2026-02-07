@@ -4,10 +4,15 @@ Called by Claude Code's SessionStart hook to maintain a window↔session
 mapping in ~/.ccbot/session_map.json. Also provides `--install` to
 auto-configure the hook in ~/.claude/settings.json.
 
-This module must NOT import config.py (which requires TELEGRAM_BOT_TOKEN),
-since hooks run inside tmux panes where bot env vars are not set.
+Supports both tmux and Zellij multiplexers — auto-detected via environment
+variables (TMUX_PANE for tmux, ZELLIJ for Zellij).
 
-Key functions: hook_main() (CLI entry), _install_hook().
+This module must NOT import config.py (which requires TELEGRAM_BOT_TOKEN),
+since hooks run inside multiplexer panes where bot env vars are not set.
+
+Key functions: hook_main() (CLI entry), _install_hook(),
+  _detect_multiplexer(), _get_tmux_session_window_key(),
+  _get_zellij_session_window_key().
 """
 
 import argparse
@@ -129,6 +134,74 @@ def _install_hook() -> int:
     return 0
 
 
+def _detect_multiplexer() -> str:
+    """Detect which multiplexer is running based on environment variables.
+
+    Returns "tmux", "zellij", or "unknown".
+    """
+    if os.environ.get("TMUX_PANE"):
+        return "tmux"
+    if os.environ.get("ZELLIJ"):
+        return "zellij"
+    return "unknown"
+
+
+def _get_tmux_session_window_key() -> str | None:
+    """Get session:window key from tmux.
+
+    TMUX_PANE is set by tmux for every process inside a pane.
+    Returns "session_name:window_name" or None on failure.
+    """
+    pane_id = os.environ.get("TMUX_PANE", "")
+    if not pane_id:
+        return None
+
+    result = subprocess.run(
+        ["tmux", "display-message", "-t", pane_id, "-p", "#{session_name}:#{window_name}"],
+        capture_output=True,
+        text=True,
+    )
+    key = result.stdout.strip()
+    if not key or ":" not in key:
+        logger.warning("Failed to get session:window key from tmux (pane=%s)", pane_id)
+        return None
+    return key
+
+
+def _get_zellij_session_window_key() -> str | None:
+    """Get session:window key from Zellij.
+
+    Uses ZELLIJ_SESSION_NAME env var + dump-layout KDL to find the
+    focused tab name. Returns "session_name:tab_name" or None on failure.
+    """
+    session_name = os.environ.get("ZELLIJ_SESSION_NAME", "")
+    if not session_name:
+        logger.warning("ZELLIJ_SESSION_NAME not set")
+        return None
+
+    # Get focused tab name from dump-layout KDL output
+    result = subprocess.run(
+        ["zellij", "action", "dump-layout"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        logger.warning("zellij dump-layout failed: %s", result.stderr.strip())
+        return None
+
+    # Parse KDL for: tab name="xxx" focus=true (attributes may be in any order)
+    # Try both orderings: name before focus and focus before name
+    match = re.search(r'tab\s[^{]*?name="([^"]+)"[^{]*?focus=true', result.stdout)
+    if not match:
+        match = re.search(r'tab\s[^{]*?focus=true[^{]*?name="([^"]+)"', result.stdout)
+    if not match:
+        logger.warning("No focused tab found in zellij layout")
+        return None
+
+    tab_name = match.group(1)
+    return f"{session_name}:{tab_name}"
+
+
 def hook_main() -> None:
     """Process a Claude Code hook event from stdin, or install the hook."""
     # Configure logging for the hook subprocess (main.py logging doesn't apply here)
@@ -184,24 +257,21 @@ def hook_main() -> None:
         logger.debug("Ignoring non-SessionStart event: %s", event)
         return
 
-    # Get tmux session:window key for the pane running this hook.
-    # TMUX_PANE is set by tmux for every process inside a pane.
-    pane_id = os.environ.get("TMUX_PANE", "")
-    if not pane_id:
-        logger.warning("TMUX_PANE not set, cannot determine window")
+    # Auto-detect multiplexer and get session:window key
+    mux = _detect_multiplexer()
+    if mux == "tmux":
+        session_window_key = _get_tmux_session_window_key()
+    elif mux == "zellij":
+        session_window_key = _get_zellij_session_window_key()
+    else:
+        logger.warning("No multiplexer detected (neither TMUX_PANE nor ZELLIJ set)")
         return
 
-    result = subprocess.run(
-        ["tmux", "display-message", "-t", pane_id, "-p", "#{session_name}:#{window_name}"],
-        capture_output=True,
-        text=True,
-    )
-    session_window_key = result.stdout.strip()
-    if not session_window_key or ":" not in session_window_key:
-        logger.warning("Failed to get session:window key from tmux (pane=%s)", pane_id)
+    if not session_window_key:
+        logger.warning("Failed to determine session:window key (multiplexer=%s)", mux)
         return
 
-    logger.debug("tmux key=%s, session_id=%s, cwd=%s", session_window_key, session_id, cwd)
+    logger.debug("%s key=%s, session_id=%s, cwd=%s", mux, session_window_key, session_id, cwd)
 
     # Read-modify-write with file locking to prevent concurrent hook races
     map_file = _SESSION_MAP_FILE

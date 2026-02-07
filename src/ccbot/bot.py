@@ -1,14 +1,14 @@
 """Telegram bot handlers — the main UI layer of CCBot.
 
 Registers all command/callback/message handlers and manages the bot lifecycle.
-Each Telegram topic maps 1:1 to a tmux window (Claude session).
+Each Telegram topic maps 1:1 to a multiplexer window (Claude session).
 
 Core responsibilities:
   - Command handlers: /start, /history, /screenshot, /esc, /kill,
-    plus forwarding unknown /commands to Claude Code via tmux.
+    plus forwarding unknown /commands to Claude Code via the multiplexer.
   - Callback query handler: directory browser, history pagination,
     interactive UI navigation, screenshot refresh.
-  - Topic-based routing: each named topic binds to one tmux window.
+  - Topic-based routing: each named topic binds to one multiplexer window.
     Unbound topics trigger the directory browser to create a new session.
   - Automatic cleanup: closing a topic kills the associated window
     (topic_closed_handler). Unsupported content (images, stickers, etc.)
@@ -101,7 +101,7 @@ from .handlers.status_polling import status_poll_loop
 from .screenshot import text_to_image
 from .session import session_manager
 from .session_monitor import NewMessage, SessionMonitor
-from .tmux_manager import tmux_manager
+from .multiplexer import get_mux
 
 logger = logging.getLogger(__name__)
 
@@ -191,12 +191,12 @@ async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return
 
-    w = await tmux_manager.find_window_by_name(wname)
+    w = await get_mux().find_window_by_name(wname)
     if not w:
         await safe_reply(update.message, f"❌ Window '{wname}' no longer exists.")
         return
 
-    text = await tmux_manager.capture_pane(w.window_id, with_ansi=True)
+    text = await get_mux().capture_pane(w.window_id, with_ansi=True)
     if not text:
         await safe_reply(update.message, "❌ Failed to capture pane content.")
         return
@@ -226,13 +226,13 @@ async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return
 
-    w = await tmux_manager.find_window_by_name(wname)
+    w = await get_mux().find_window_by_name(wname)
     if not w:
         await safe_reply(update.message, f"❌ Window '{wname}' no longer exists.")
         return
 
     # Send Escape control character (no enter)
-    await tmux_manager.send_keys(w.window_id, "\x1b", enter=False)
+    await get_mux().send_keys(w.window_id, "\x1b", enter=False)
     await safe_reply(update.message, "⎋ Sent Escape")
 
 
@@ -248,9 +248,9 @@ async def topic_closed_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     wname = session_manager.get_window_for_thread(user.id, thread_id)
     if wname:
-        w = await tmux_manager.find_window_by_name(wname)
+        w = await get_mux().find_window_by_name(wname)
         if w:
-            await tmux_manager.kill_window(w.window_id)
+            await get_mux().kill_window(w.window_id)
             logger.info(
                 "Topic closed: killed window %s (user=%d, thread=%d)",
                 wname, user.id, thread_id,
@@ -285,7 +285,7 @@ async def forward_command_handler(update: Update, context: ContextTypes.DEFAULT_
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return
 
-    w = await tmux_manager.find_window_by_name(wname)
+    w = await get_mux().find_window_by_name(wname)
     if not w:
         await safe_reply(update.message, f"❌ Window '{wname}' no longer exists.")
         return
@@ -366,7 +366,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     # Bound topic — forward to bound window
-    w = await tmux_manager.find_window_by_name(wname)
+    w = await get_mux().find_window_by_name(wname)
     if not w:
         logger.info("Stale binding: window %s gone, unbinding (user=%d, thread=%d)", wname, user.id, thread_id)
         session_manager.unbind_thread(user.id, thread_id)
@@ -429,7 +429,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await query.answer("Invalid data")
             return
 
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if w:
             await send_history(
                 query,
@@ -523,7 +523,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         clear_browse_state(context.user_data)
 
-        success, message, created_wname = await tmux_manager.create_window(selected_path)
+        success, message, created_wname = await get_mux().create_window(selected_path)
         if success:
             logger.info(
                 "Window created: %s at %s (user=%d, thread=%s)",
@@ -591,12 +591,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Screenshot: Refresh
     elif data.startswith(CB_SCREENSHOT_REFRESH):
         window_name = data[len(CB_SCREENSHOT_REFRESH):]
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if not w:
             await query.answer("Window no longer exists", show_alert=True)
             return
 
-        text = await tmux_manager.capture_pane(w.window_id, with_ansi=True)
+        text = await get_mux().capture_pane(w.window_id, with_ansi=True)
         if not text:
             await query.answer("Failed to capture pane", show_alert=True)
             return
@@ -622,9 +622,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith(CB_ASK_UP):
         window_name = data[len(CB_ASK_UP):]
         thread_id = _get_thread_id(update)
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if w:
-            await tmux_manager.send_keys(w.window_id, "Up", enter=False, literal=False)
+            await get_mux().send_keys(w.window_id, "Up", enter=False, literal=False)
             await asyncio.sleep(0.15)
             await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
         await query.answer()
@@ -633,9 +633,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith(CB_ASK_DOWN):
         window_name = data[len(CB_ASK_DOWN):]
         thread_id = _get_thread_id(update)
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if w:
-            await tmux_manager.send_keys(w.window_id, "Down", enter=False, literal=False)
+            await get_mux().send_keys(w.window_id, "Down", enter=False, literal=False)
             await asyncio.sleep(0.15)
             await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
         await query.answer()
@@ -644,9 +644,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith(CB_ASK_LEFT):
         window_name = data[len(CB_ASK_LEFT):]
         thread_id = _get_thread_id(update)
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if w:
-            await tmux_manager.send_keys(w.window_id, "Left", enter=False, literal=False)
+            await get_mux().send_keys(w.window_id, "Left", enter=False, literal=False)
             await asyncio.sleep(0.15)
             await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
         await query.answer()
@@ -655,9 +655,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith(CB_ASK_RIGHT):
         window_name = data[len(CB_ASK_RIGHT):]
         thread_id = _get_thread_id(update)
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if w:
-            await tmux_manager.send_keys(w.window_id, "Right", enter=False, literal=False)
+            await get_mux().send_keys(w.window_id, "Right", enter=False, literal=False)
             await asyncio.sleep(0.15)
             await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
         await query.answer()
@@ -666,9 +666,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith(CB_ASK_ESC):
         window_name = data[len(CB_ASK_ESC):]
         thread_id = _get_thread_id(update)
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if w:
-            await tmux_manager.send_keys(w.window_id, "Escape", enter=False, literal=False)
+            await get_mux().send_keys(w.window_id, "Escape", enter=False, literal=False)
             await clear_interactive_msg(user.id, context.bot, thread_id)
         await query.answer("⎋ Esc")
 
@@ -676,9 +676,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith(CB_ASK_ENTER):
         window_name = data[len(CB_ASK_ENTER):]
         thread_id = _get_thread_id(update)
-        w = await tmux_manager.find_window_by_name(window_name)
+        w = await get_mux().find_window_by_name(window_name)
         if w:
-            await tmux_manager.send_keys(w.window_id, "Enter", enter=False, literal=False)
+            await get_mux().send_keys(w.window_id, "Enter", enter=False, literal=False)
             await asyncio.sleep(0.15)
             await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
         await query.answer("⏎ Enter")

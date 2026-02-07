@@ -2,8 +2,8 @@
 
 Handles two execution modes:
   1. `ccbot hook` — delegates to hook.hook_main() for Claude Code hook processing.
-  2. Default — configures logging, initializes tmux session, and starts the
-     Telegram bot polling loop via bot.create_bot().
+  2. Default — configures logging, initializes multiplexer session, and starts
+     the Telegram bot polling loop via bot.create_bot().
 """
 
 import logging
@@ -27,14 +27,15 @@ def main() -> None:
 
     # Import after logging is configured — Config() validates env vars
     from .config import config
-    from .tmux_manager import tmux_manager
+    from .multiplexer import get_mux
 
     logger.info("Allowed users: %s", config.allowed_users)
     logger.info("Claude projects path: %s", config.claude_projects_path)
 
-    # Ensure tmux session exists
-    session = tmux_manager.get_or_create_session()
-    logger.info("Tmux session '%s' ready", session.session_name)
+    # Ensure multiplexer session exists
+    mux = get_mux()
+    mux.get_or_create_session()
+    logger.info("Multiplexer session '%s' ready (backend=%s)", config.mux_session_name, config.multiplexer_backend)
 
     logger.info("Starting Telegram bot...")
     from .bot import create_bot
