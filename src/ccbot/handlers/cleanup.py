@@ -1,11 +1,11 @@
-"""Unified cleanup API for topic and user state.
+"""Unified cleanup API for topic and chat state.
 
 Provides centralized cleanup functions that coordinate state cleanup across
-all modules, preventing memory leaks when topics are deleted or users disconnect.
+all modules, preventing memory leaks when topics are deleted or chats disconnect.
 
 Functions:
   - clear_topic_state: Clean up all memory state for a specific topic
-  - clear_user_state: Clean up all memory state for a user
+  - clear_chat_state: Clean up all memory state for a chat
 """
 
 from typing import Any
@@ -17,7 +17,7 @@ from .message_queue import clear_status_msg_info, clear_tool_msg_ids_for_topic
 
 
 async def clear_topic_state(
-    user_id: int,
+    chat_id: int,
     thread_id: int,
     bot: Bot | None = None,
     user_data: dict[str, Any] | None = None,
@@ -35,13 +35,13 @@ async def clear_topic_state(
       - user_data pending state (_pending_thread_id, _pending_thread_text)
     """
     # Clear status message tracking
-    clear_status_msg_info(user_id, thread_id)
+    clear_status_msg_info(chat_id, thread_id)
 
     # Clear tool message ID tracking
-    clear_tool_msg_ids_for_topic(user_id, thread_id)
+    clear_tool_msg_ids_for_topic(chat_id, thread_id)
 
     # Clear interactive UI state (also deletes message from chat)
-    await clear_interactive_msg(user_id, bot, thread_id)
+    await clear_interactive_msg(chat_id, bot, thread_id)
 
     # Clear pending thread state from user_data
     if user_data is not None:
@@ -50,20 +50,20 @@ async def clear_topic_state(
             user_data.pop("_pending_thread_text", None)
 
 
-async def clear_user_state(
-    user_id: int,
+async def clear_chat_state(
+    chat_id: int,
     bot: Bot | None = None,
     user_data: dict[str, Any] | None = None,
 ) -> None:
-    """Clear all memory state associated with a user.
+    """Clear all memory state associated with a chat.
 
-    This should be called when a user fully disconnects or is removed.
+    This should be called when a chat fully disconnects or is removed.
 
-    Cleans up all topics for the user via clear_topic_state.
+    Cleans up all topics for the chat via clear_topic_state.
     """
     from ..session import session_manager
 
-    # Get all thread bindings for this user and clean up each
-    bindings = session_manager.get_all_thread_windows(user_id)
+    # Get all thread bindings for this chat and clean up each
+    bindings = session_manager.get_all_thread_windows(chat_id)
     for thread_id in bindings:
-        await clear_topic_state(user_id, thread_id, bot, user_data)
+        await clear_topic_state(chat_id, thread_id, bot, user_data)

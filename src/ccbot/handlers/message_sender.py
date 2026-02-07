@@ -25,23 +25,23 @@ logger = logging.getLogger(__name__)
 # Disable link previews in all messages to reduce visual noise
 NO_LINK_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
-# Rate limiting: last send time per user to avoid Telegram flood control
+# Rate limiting: last send time per chat to avoid Telegram flood control
 _last_send_time: dict[int, float] = {}
-MESSAGE_SEND_INTERVAL = 1.1  # seconds between messages to same user
+MESSAGE_SEND_INTERVAL = 1.1  # seconds between messages to same chat
 
 
-async def rate_limit_send(user_id: int) -> None:
-    """Wait if necessary to avoid Telegram flood control (max 1 msg/sec per user)."""
+async def rate_limit_send(chat_id: int) -> None:
+    """Wait if necessary to avoid Telegram flood control (max 1 msg/sec per chat)."""
     import asyncio
 
     now = time.time()
-    if user_id in _last_send_time:
-        elapsed = now - _last_send_time[user_id]
+    if chat_id in _last_send_time:
+        elapsed = now - _last_send_time[chat_id]
         if elapsed < MESSAGE_SEND_INTERVAL:
             wait_time = MESSAGE_SEND_INTERVAL - elapsed
-            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s for user {user_id}")
+            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s for chat {chat_id}")
             await asyncio.sleep(wait_time)
-    _last_send_time[user_id] = time.time()
+    _last_send_time[chat_id] = time.time()
 
 
 async def _send_with_fallback(
@@ -77,7 +77,7 @@ async def _send_with_fallback(
 
 async def rate_limit_send_message(
     bot: Bot,
-    user_id: int,
+    chat_id: int,
     text: str,
     **kwargs: Any,
 ) -> Message | None:
@@ -86,8 +86,8 @@ async def rate_limit_send_message(
     Combines rate_limit_send() + _send_with_fallback() for convenience.
     Returns the sent Message on success, None on failure.
     """
-    await rate_limit_send(user_id)
-    return await _send_with_fallback(bot, user_id, text, **kwargs)
+    await rate_limit_send(chat_id)
+    return await _send_with_fallback(bot, chat_id, text, **kwargs)
 
 
 async def safe_reply(message: Message, text: str, **kwargs: Any) -> Message:

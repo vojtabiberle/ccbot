@@ -9,9 +9,9 @@ Handles interactive terminal UIs displayed by Claude Code:
 Provides:
   - Keyboard navigation (up/down/left/right/enter/esc)
   - Terminal capture and display
-  - Interactive mode tracking per user and thread
+  - Interactive mode tracking per chat and thread
 
-State dicts are keyed by (user_id, thread_id_or_0) for Telegram topic support.
+State dicts are keyed by (chat_id, thread_id_or_0) for Telegram topic support.
 """
 
 import logging
@@ -36,35 +36,35 @@ logger = logging.getLogger(__name__)
 # Tool names that trigger interactive UI via JSONL (terminal capture + inline keyboard)
 INTERACTIVE_TOOL_NAMES = frozenset({"AskUserQuestion", "ExitPlanMode"})
 
-# Track interactive UI message IDs: (user_id, thread_id_or_0) -> message_id
+# Track interactive UI message IDs: (chat_id, thread_id_or_0) -> message_id
 _interactive_msgs: dict[tuple[int, int], int] = {}
 
-# Track interactive mode: (user_id, thread_id_or_0) -> window_name
+# Track interactive mode: (chat_id, thread_id_or_0) -> window_name
 _interactive_mode: dict[tuple[int, int], str] = {}
 
 
-def get_interactive_window(user_id: int, thread_id: int | None = None) -> str | None:
-    """Get the window name for user's interactive mode."""
-    return _interactive_mode.get((user_id, thread_id or 0))
+def get_interactive_window(chat_id: int, thread_id: int | None = None) -> str | None:
+    """Get the window name for chat's interactive mode."""
+    return _interactive_mode.get((chat_id, thread_id or 0))
 
 
 def set_interactive_mode(
-    user_id: int, window_name: str, thread_id: int | None = None,
+    chat_id: int, window_name: str, thread_id: int | None = None,
 ) -> None:
-    """Set interactive mode for a user."""
-    logger.debug("Set interactive mode: user=%d, window=%s, thread=%s", user_id, window_name, thread_id)
-    _interactive_mode[(user_id, thread_id or 0)] = window_name
+    """Set interactive mode for a chat."""
+    logger.debug("Set interactive mode: chat=%d, window=%s, thread=%s", chat_id, window_name, thread_id)
+    _interactive_mode[(chat_id, thread_id or 0)] = window_name
 
 
-def clear_interactive_mode(user_id: int, thread_id: int | None = None) -> None:
-    """Clear interactive mode for a user (without deleting message)."""
-    logger.debug("Clear interactive mode: user=%d, thread=%s", user_id, thread_id)
-    _interactive_mode.pop((user_id, thread_id or 0), None)
+def clear_interactive_mode(chat_id: int, thread_id: int | None = None) -> None:
+    """Clear interactive mode for a chat (without deleting message)."""
+    logger.debug("Clear interactive mode: chat=%d, thread=%s", chat_id, thread_id)
+    _interactive_mode.pop((chat_id, thread_id or 0), None)
 
 
-def get_interactive_msg_id(user_id: int, thread_id: int | None = None) -> int | None:
-    """Get the interactive message ID for a user."""
-    return _interactive_msgs.get((user_id, thread_id or 0))
+def get_interactive_msg_id(chat_id: int, thread_id: int | None = None) -> int | None:
+    """Get the interactive message ID for a chat."""
+    return _interactive_msgs.get((chat_id, thread_id or 0))
 
 
 def _build_interactive_keyboard(
@@ -103,17 +103,17 @@ def _build_interactive_keyboard(
 
 async def handle_interactive_ui(
     bot: Bot,
-    user_id: int,
+    chat_id: int,
     window_name: str,
     thread_id: int | None = None,
 ) -> bool:
-    """Capture terminal and send interactive UI content to user.
+    """Capture terminal and send interactive UI content to chat.
 
     Handles AskUserQuestion, ExitPlanMode, Permission Prompt, and
     RestoreCheckpoint UIs. Returns True if UI was detected and sent,
     False otherwise.
     """
-    ikey = (user_id, thread_id or 0)
+    ikey = (chat_id, thread_id or 0)
     w = await get_mux().find_window_by_name(window_name)
     if not w:
         return False
@@ -154,7 +154,7 @@ async def handle_interactive_ui(
     if existing_msg_id:
         try:
             await bot.edit_message_text(
-                chat_id=user_id,
+                chat_id=chat_id,
                 message_id=existing_msg_id,
                 text=text,
                 reply_markup=keyboard,
@@ -167,9 +167,9 @@ async def handle_interactive_ui(
             return True
 
     # Send new message
-    logger.info("Sending interactive UI to user %d for window %s", user_id, window_name)
+    logger.info("Sending interactive UI to chat %d for window %s", chat_id, window_name)
     sent = await rate_limit_send_message(
-        bot, user_id, text,
+        bot, chat_id, text,
         reply_markup=keyboard,
         **thread_kwargs,  # type: ignore[arg-type]
     )
@@ -181,15 +181,15 @@ async def handle_interactive_ui(
 
 
 async def clear_interactive_msg(
-    user_id: int, bot: Bot | None = None, thread_id: int | None = None,
+    chat_id: int, bot: Bot | None = None, thread_id: int | None = None,
 ) -> None:
     """Clear tracked interactive message, delete from chat, and exit interactive mode."""
-    ikey = (user_id, thread_id or 0)
+    ikey = (chat_id, thread_id or 0)
     msg_id = _interactive_msgs.pop(ikey, None)
     _interactive_mode.pop(ikey, None)
-    logger.debug("Clear interactive msg: user=%d, thread=%s, msg_id=%s", user_id, thread_id, msg_id)
+    logger.debug("Clear interactive msg: chat=%d, thread=%s, msg_id=%s", chat_id, thread_id, msg_id)
     if bot and msg_id:
         try:
-            await bot.delete_message(chat_id=user_id, message_id=msg_id)
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         except Exception:
             pass  # Message may already be deleted or too old

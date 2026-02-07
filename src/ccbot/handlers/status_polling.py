@@ -45,11 +45,11 @@ TOPIC_CHECK_INTERVAL = 60.0  # seconds
 
 async def update_status_message(
     bot: Bot,
-    user_id: int,
+    chat_id: int,
     window_name: str,
     thread_id: int | None = None,
 ) -> None:
-    """Poll terminal and enqueue status update for user's active window.
+    """Poll terminal and enqueue status update for chat's active window.
 
     Also detects permission prompt UIs (not triggered via JSONL) and enters
     interactive mode when found.
@@ -57,7 +57,7 @@ async def update_status_message(
     w = await get_mux().find_window_by_name(window_name)
     if not w:
         # Window gone, enqueue clear
-        await enqueue_status_update(bot, user_id, window_name, None, thread_id=thread_id)
+        await enqueue_status_update(bot, chat_id, window_name, None, thread_id=thread_id)
         return
 
     pane_text = await get_mux().capture_pane(w.window_id)
@@ -65,26 +65,26 @@ async def update_status_message(
         # Transient capture failure - keep existing status message
         return
 
-    interactive_window = get_interactive_window(user_id, thread_id)
+    interactive_window = get_interactive_window(chat_id, thread_id)
     should_check_new_ui = True
 
     if interactive_window == window_name:
-        # User is in interactive mode for THIS window
+        # Chat is in interactive mode for THIS window
         if is_interactive_ui(pane_text):
             # Interactive UI still showing — skip status update (user is interacting)
             return
         # Interactive UI gone — clear interactive mode, fall through to status check.
         # Don't re-check for new UI this cycle (the old one just disappeared).
-        await clear_interactive_msg(user_id, bot, thread_id)
+        await clear_interactive_msg(chat_id, bot, thread_id)
         should_check_new_ui = False
     elif interactive_window is not None:
-        # User is in interactive mode for a DIFFERENT window (window switched)
+        # Chat is in interactive mode for a DIFFERENT window (window switched)
         # Clear stale interactive mode
-        await clear_interactive_msg(user_id, bot, thread_id)
+        await clear_interactive_msg(chat_id, bot, thread_id)
 
     # Check for permission prompt (interactive UI not triggered via JSONL)
     if should_check_new_ui and is_interactive_ui(pane_text):
-        await handle_interactive_ui(bot, user_id, window_name, thread_id)
+        await handle_interactive_ui(bot, chat_id, window_name, thread_id)
         return
 
     # Normal status line check
@@ -92,7 +92,7 @@ async def update_status_message(
 
     if status_line:
         await enqueue_status_update(
-            bot, user_id, window_name, status_line, thread_id=thread_id,
+            bot, chat_id, window_name, status_line, thread_id=thread_id,
         )
     # If no status line, keep existing status message (don't clear on transient state)
 
@@ -107,12 +107,12 @@ async def status_poll_loop(bot: Bot) -> None:
             now = time.monotonic()
             if now - last_topic_check >= TOPIC_CHECK_INTERVAL:
                 last_topic_check = now
-                for user_id, thread_id, wname in list(
+                for chat_id, thread_id, wname in list(
                     session_manager.iter_thread_bindings()
                 ):
                     try:
                         await bot.unpin_all_forum_topic_messages(
-                            chat_id=user_id,
+                            chat_id=chat_id,
                             message_thread_id=thread_id,
                         )
                     except BadRequest as e:
@@ -121,14 +121,14 @@ async def status_poll_loop(bot: Bot) -> None:
                             w = await get_mux().find_window_by_name(wname)
                             if w:
                                 await get_mux().kill_window(w.window_id)
-                            session_manager.unbind_thread(user_id, thread_id)
-                            await clear_topic_state(user_id, thread_id, bot)
+                            session_manager.unbind_thread(chat_id, thread_id)
+                            await clear_topic_state(chat_id, thread_id, bot)
                             logger.info(
                                 "Topic deleted: killed window '%s' and "
-                                "unbound thread %d for user %d",
+                                "unbound thread %d for chat %d",
                                 wname,
                                 thread_id,
-                                user_id,
+                                chat_id,
                             )
                         else:
                             logger.debug(
@@ -139,29 +139,29 @@ async def status_poll_loop(bot: Bot) -> None:
                             "Topic probe error for %s: %s", wname, e,
                         )
 
-            for user_id, thread_id, wname in list(
+            for chat_id, thread_id, wname in list(
                 session_manager.iter_thread_bindings()
             ):
                 try:
                     # Clean up stale bindings (window no longer exists)
                     w = await get_mux().find_window_by_name(wname)
                     if not w:
-                        session_manager.unbind_thread(user_id, thread_id)
-                        await clear_topic_state(user_id, thread_id, bot)
+                        session_manager.unbind_thread(chat_id, thread_id)
+                        await clear_topic_state(chat_id, thread_id, bot)
                         logger.info(
-                            f"Cleaned up stale binding: user={user_id} "
+                            f"Cleaned up stale binding: chat={chat_id} "
                             f"thread={thread_id} window={wname}"
                         )
                         continue
-                    queue = get_message_queue(user_id)
+                    queue = get_message_queue(chat_id)
                     if queue and not queue.empty():
                         continue
                     await update_status_message(
-                        bot, user_id, wname, thread_id=thread_id,
+                        bot, chat_id, wname, thread_id=thread_id,
                     )
                 except Exception as e:
                     logger.debug(
-                        f"Status update error for user {user_id} "
+                        f"Status update error for chat {chat_id} "
                         f"thread {thread_id}: {e}"
                     )
         except Exception as e:

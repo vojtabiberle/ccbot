@@ -165,11 +165,12 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user = update.effective_user
     if not user or not is_user_allowed(user.id):
         return
-    if not update.message:
+    if not update.message or not update.effective_chat:
         return
 
+    chat_id = update.effective_chat.id
     thread_id = _get_thread_id(update)
-    wname = session_manager.resolve_window_for_thread(user.id, thread_id)
+    wname = session_manager.resolve_window_for_thread(chat_id, thread_id)
     if not wname:
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return
@@ -182,11 +183,12 @@ async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     if not user or not is_user_allowed(user.id):
         return
-    if not update.message:
+    if not update.message or not update.effective_chat:
         return
 
+    chat_id = update.effective_chat.id
     thread_id = _get_thread_id(update)
-    wname = session_manager.resolve_window_for_thread(user.id, thread_id)
+    wname = session_manager.resolve_window_for_thread(chat_id, thread_id)
     if not wname:
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return
@@ -217,11 +219,12 @@ async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     if not user or not is_user_allowed(user.id):
         return
-    if not update.message:
+    if not update.message or not update.effective_chat:
         return
 
+    chat_id = update.effective_chat.id
     thread_id = _get_thread_id(update)
-    wname = session_manager.resolve_window_for_thread(user.id, thread_id)
+    wname = session_manager.resolve_window_for_thread(chat_id, thread_id)
     if not wname:
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return
@@ -241,30 +244,33 @@ async def topic_closed_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     if not user or not is_user_allowed(user.id):
         return
+    if not update.effective_chat:
+        return
 
+    chat_id = update.effective_chat.id
     thread_id = _get_thread_id(update)
     if thread_id is None:
         return
 
-    wname = session_manager.get_window_for_thread(user.id, thread_id)
+    wname = session_manager.get_window_for_thread(chat_id, thread_id)
     if wname:
         w = await get_mux().find_window_by_name(wname)
         if w:
             await get_mux().kill_window(w.window_id)
             logger.info(
-                "Topic closed: killed window %s (user=%d, thread=%d)",
-                wname, user.id, thread_id,
+                "Topic closed: killed window %s (chat=%d, thread=%d)",
+                wname, chat_id, thread_id,
             )
         else:
             logger.info(
-                "Topic closed: window %s already gone (user=%d, thread=%d)",
-                wname, user.id, thread_id,
+                "Topic closed: window %s already gone (chat=%d, thread=%d)",
+                wname, chat_id, thread_id,
             )
-        session_manager.unbind_thread(user.id, thread_id)
+        session_manager.unbind_thread(chat_id, thread_id)
         # Clean up all memory state for this topic
-        await clear_topic_state(user.id, thread_id, context.bot, context.user_data)
+        await clear_topic_state(chat_id, thread_id, context.bot, context.user_data)
     else:
-        logger.debug("Topic closed: no binding (user=%d, thread=%d)", user.id, thread_id)
+        logger.debug("Topic closed: no binding (chat=%d, thread=%d)", chat_id, thread_id)
 
 
 async def forward_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -272,15 +278,16 @@ async def forward_command_handler(update: Update, context: ContextTypes.DEFAULT_
     user = update.effective_user
     if not user or not is_user_allowed(user.id):
         return
-    if not update.message:
+    if not update.message or not update.effective_chat:
         return
 
+    chat_id = update.effective_chat.id
     cmd_text = update.message.text or ""
     # The full text is already a slash command like "/clear" or "/compact foo"
     cc_slash = cmd_text.split("@")[0]  # strip bot mention
 
     thread_id = _get_thread_id(update)
-    wname = session_manager.resolve_window_for_thread(user.id, thread_id)
+    wname = session_manager.resolve_window_for_thread(chat_id, thread_id)
     if not wname:
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return
@@ -327,9 +334,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await safe_reply(update.message, "You are not authorized to use this bot.")
         return
 
-    if not update.message or not update.message.text:
+    if not update.message or not update.message.text or not update.effective_chat:
         return
 
+    chat_id = update.effective_chat.id
     text = update.message.text
     thread_id = _get_thread_id(update)
 
@@ -349,10 +357,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    wname = session_manager.get_window_for_thread(user.id, thread_id)
+    wname = session_manager.get_window_for_thread(chat_id, thread_id)
     if wname is None:
         # Unbound topic — show directory browser to create a new session
-        logger.info("Unbound topic: showing directory browser (user=%d, thread=%d)", user.id, thread_id)
+        logger.info("Unbound topic: showing directory browser (chat=%d, thread=%d)", chat_id, thread_id)
         start_path = str(Path.cwd())
         msg_text, keyboard, subdirs = build_directory_browser(start_path)
         if context.user_data is not None:
@@ -368,8 +376,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Bound topic — forward to bound window
     w = await get_mux().find_window_by_name(wname)
     if not w:
-        logger.info("Stale binding: window %s gone, unbinding (user=%d, thread=%d)", wname, user.id, thread_id)
-        session_manager.unbind_thread(user.id, thread_id)
+        logger.info("Stale binding: window %s gone, unbinding (chat=%d, thread=%d)", wname, chat_id, thread_id)
+        session_manager.unbind_thread(chat_id, thread_id)
         await safe_reply(
             update.message,
             f"❌ Window '{wname}' no longer exists. Binding removed.\n"
@@ -378,7 +386,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     await update.message.chat.send_action(ChatAction.TYPING)
-    clear_status_msg_info(user.id, thread_id)
+    clear_status_msg_info(chat_id, thread_id)
 
     success, message = await session_manager.send_to_window(wname, text)
     if not success:
@@ -386,10 +394,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     # If in interactive mode, refresh the UI after sending text
-    interactive_window = get_interactive_window(user.id, thread_id)
+    interactive_window = get_interactive_window(chat_id, thread_id)
     if interactive_window and interactive_window == wname:
         await asyncio.sleep(0.2)
-        await handle_interactive_ui(context.bot, user.id, wname, thread_id)
+        await handle_interactive_ui(context.bot, chat_id, wname, thread_id)
 
 
 # --- Callback query handler ---
@@ -404,7 +412,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not user or not is_user_allowed(user.id):
         await query.answer("Not authorized")
         return
+    if not update.effective_chat:
+        return
 
+    chat_id = update.effective_chat.id
     data = query.data
 
     # History: older/newer pagination
@@ -526,20 +537,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         success, message, created_wname = await get_mux().create_window(selected_path)
         if success:
             logger.info(
-                "Window created: %s at %s (user=%d, thread=%s)",
-                created_wname, selected_path, user.id, pending_thread_id,
+                "Window created: %s at %s (chat=%d, thread=%s)",
+                created_wname, selected_path, chat_id, pending_thread_id,
             )
+            # Get old session_id to skip when waiting for the new hook
+            old_state = session_manager.window_states.get(created_wname)
+            old_sid = old_state.session_id if old_state else None
             # Wait for Claude Code's SessionStart hook to register in session_map
-            await session_manager.wait_for_session_map_entry(created_wname)
+            await session_manager.wait_for_session_map_entry(
+                created_wname, exclude_session_id=old_sid,
+            )
 
             if pending_thread_id is not None:
                 # Thread bind flow: bind thread to newly created window
-                session_manager.bind_thread(user.id, pending_thread_id, created_wname)
+                session_manager.bind_thread(chat_id, pending_thread_id, created_wname)
 
                 # Rename the topic to match the window name
                 try:
                     await context.bot.edit_forum_topic(
-                        chat_id=user.id,
+                        chat_id=chat_id,
                         message_thread_id=pending_thread_id,
                         name=created_wname,
                     )
@@ -564,7 +580,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     if not send_ok:
                         logger.warning("Failed to forward pending text: %s", send_msg)
                         await safe_send(
-                            context.bot, user.id,
+                            context.bot, chat_id,
                             f"❌ Failed to send pending message: {send_msg}",
                             message_thread_id=pending_thread_id,
                         )
@@ -626,7 +642,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if w:
             await get_mux().send_keys(w.window_id, "Up", enter=False, literal=False)
             await asyncio.sleep(0.15)
-            await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
+            await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer()
 
     # Interactive UI: Down arrow
@@ -637,7 +653,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if w:
             await get_mux().send_keys(w.window_id, "Down", enter=False, literal=False)
             await asyncio.sleep(0.15)
-            await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
+            await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer()
 
     # Interactive UI: Left arrow
@@ -648,7 +664,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if w:
             await get_mux().send_keys(w.window_id, "Left", enter=False, literal=False)
             await asyncio.sleep(0.15)
-            await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
+            await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer()
 
     # Interactive UI: Right arrow
@@ -659,7 +675,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if w:
             await get_mux().send_keys(w.window_id, "Right", enter=False, literal=False)
             await asyncio.sleep(0.15)
-            await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
+            await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer()
 
     # Interactive UI: Escape
@@ -669,7 +685,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         w = await get_mux().find_window_by_name(window_name)
         if w:
             await get_mux().send_keys(w.window_id, "Escape", enter=False, literal=False)
-            await clear_interactive_msg(user.id, context.bot, thread_id)
+            await clear_interactive_msg(chat_id, context.bot, thread_id)
         await query.answer("⎋ Esc")
 
     # Interactive UI: Enter
@@ -680,14 +696,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if w:
             await get_mux().send_keys(w.window_id, "Enter", enter=False, literal=False)
             await asyncio.sleep(0.15)
-            await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
+            await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer("⏎ Enter")
 
     # Interactive UI: refresh display
     elif data.startswith(CB_ASK_REFRESH):
         window_name = data[len(CB_ASK_REFRESH):]
         thread_id = _get_thread_id(update)
-        await handle_interactive_ui(context.bot, user.id, window_name, thread_id)
+        await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer("🔄")
 
 
@@ -713,35 +729,35 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
         logger.info(f"No active users for session {msg.session_id}")
         return
 
-    for user_id, wname, thread_id in active_users:
+    for chat_id, wname, thread_id in active_users:
         # Handle interactive tools specially - capture terminal and send UI
         if msg.tool_name in INTERACTIVE_TOOL_NAMES and msg.content_type == "tool_use":
             # Mark interactive mode BEFORE sleeping so polling skips this window
-            set_interactive_mode(user_id, wname, thread_id)
+            set_interactive_mode(chat_id, wname, thread_id)
             # Flush pending messages (e.g. plan content) before sending interactive UI
-            queue = get_message_queue(user_id)
+            queue = get_message_queue(chat_id)
             if queue:
                 await queue.join()
             # Wait briefly for Claude Code to render the question UI
             await asyncio.sleep(0.3)
-            handled = await handle_interactive_ui(bot, user_id, wname, thread_id)
+            handled = await handle_interactive_ui(bot, chat_id, wname, thread_id)
             if handled:
                 # Update user's read offset
                 session = await session_manager.resolve_session_for_window(wname)
                 if session and session.file_path:
                     try:
                         file_size = Path(session.file_path).stat().st_size
-                        session_manager.update_user_window_offset(user_id, wname, file_size)
+                        session_manager.update_user_window_offset(chat_id, wname, file_size)
                     except OSError:
                         pass
                 continue  # Don't send the normal tool_use message
             else:
                 # UI not rendered — clear the early-set mode
-                clear_interactive_mode(user_id, thread_id)
+                clear_interactive_mode(chat_id, thread_id)
 
         # Any non-interactive message means the interaction is complete — delete the UI message
-        if get_interactive_msg_id(user_id, thread_id):
-            await clear_interactive_msg(user_id, bot, thread_id)
+        if get_interactive_msg_id(chat_id, thread_id):
+            await clear_interactive_msg(chat_id, bot, thread_id)
 
         parts = build_response_parts(
             msg.text, msg.is_complete, msg.content_type, msg.role,
@@ -753,7 +769,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
             # to ensure sequential processing with tool_use message sending
             await enqueue_content_message(
                 bot=bot,
-                user_id=user_id,
+                chat_id=chat_id,
                 window_name=wname,
                 parts=parts,
                 tool_use_id=msg.tool_use_id,
@@ -768,7 +784,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
             if session and session.file_path:
                 try:
                     file_size = Path(session.file_path).stat().st_size
-                    session_manager.update_user_window_offset(user_id, wname, file_size)
+                    session_manager.update_user_window_offset(chat_id, wname, file_size)
                 except OSError:
                     pass
 

@@ -2,7 +2,7 @@
 
 Manages the key mappings:
   Window→Session (window_states): which Claude session_id a window holds.
-  User→Thread→Window (thread_bindings): topic-to-window bindings (1 topic = 1 window).
+  Chat→Thread→Window (thread_bindings): topic-to-window bindings (1 topic = 1 window).
 
 Responsibilities:
   - Persist/load state to ~/.ccbot/state.json.
@@ -14,9 +14,9 @@ Responsibilities:
 
 Key class: SessionManager (singleton instantiated as `session_manager`).
 Key methods for thread binding access:
-  - resolve_window_for_thread: Get window name for a user's thread
-  - iter_thread_bindings: Generator for iterating all (user_id, thread_id, window_name)
-  - find_users_for_session: Find all users bound to a session_id
+  - resolve_window_for_thread: Get window name for a chat's thread
+  - iter_thread_bindings: Generator for iterating all (chat_id, thread_id, window_name)
+  - find_users_for_session: Find all chats bound to a session_id
 """
 
 from __future__ import annotations
@@ -97,14 +97,14 @@ class SessionManager:
 
     window_states: window_name -> WindowState (session_id)
     user_window_offsets: user_id -> {window_name -> byte_offset}
-    thread_bindings: user_id -> {thread_id -> window_name}
+    thread_bindings: chat_id -> {thread_id -> window_name}
     """
 
     window_states: dict[str, WindowState] = field(default_factory=dict)
     user_window_offsets: dict[int, dict[str, int]] = field(default_factory=dict)
     thread_bindings: dict[int, dict[int, str]] = field(default_factory=dict)
 
-    # Reverse index: (user_id, window_name) -> thread_id for O(1) inbound lookups
+    # Reverse index: (chat_id, window_name) -> thread_id for O(1) inbound lookups
     _window_to_thread: dict[tuple[int, str], int] = field(
         default_factory=dict, repr=False
     )
@@ -116,9 +116,9 @@ class SessionManager:
     def _rebuild_reverse_index(self) -> None:
         """Rebuild _window_to_thread from thread_bindings."""
         self._window_to_thread = {}
-        for uid, bindings in self.thread_bindings.items():
+        for cid, bindings in self.thread_bindings.items():
             for tid, wname in bindings.items():
-                self._window_to_thread[(uid, wname)] = tid
+                self._window_to_thread[(cid, wname)] = tid
 
     def _save_state(self) -> None:
         state = {
@@ -130,8 +130,8 @@ class SessionManager:
                 for uid, offsets in self.user_window_offsets.items()
             },
             "thread_bindings": {
-                str(uid): {str(tid): wname for tid, wname in bindings.items()}
-                for uid, bindings in self.thread_bindings.items()
+                str(cid): {str(tid): wname for tid, wname in bindings.items()}
+                for cid, bindings in self.thread_bindings.items()
             },
         }
         atomic_write_json(config.state_file, state)
@@ -151,8 +151,8 @@ class SessionManager:
                     for uid, offsets in state.get("user_window_offsets", {}).items()
                 }
                 self.thread_bindings = {
-                    int(uid): {int(tid): wname for tid, wname in bindings.items()}
-                    for uid, bindings in state.get("thread_bindings", {}).items()
+                    int(cid): {int(tid): wname for tid, wname in bindings.items()}
+                    for cid, bindings in state.get("thread_bindings", {}).items()
                 }
             except (json.JSONDecodeError, ValueError) as e:
                 logger.warning(f"Failed to load state: {e}")
@@ -161,9 +161,14 @@ class SessionManager:
                 self.thread_bindings = {}
 
     async def wait_for_session_map_entry(
-        self, window_name: str, timeout: float = 5.0, interval: float = 0.5
+        self, window_name: str, timeout: float = 5.0, interval: float = 0.5,
+        exclude_session_id: str | None = None,
     ) -> bool:
         """Poll session_map.json until an entry for window_name appears.
+
+        Args:
+            exclude_session_id: If set, ignore entries with this session_id
+                (used to skip stale entries from a previous run).
 
         Returns True if the entry was found within timeout, False otherwise.
         """
@@ -177,7 +182,8 @@ class SessionManager:
                         content = await f.read()
                     session_map = json.loads(content)
                     info = session_map.get(key, {})
-                    if info.get("session_id"):
+                    sid = info.get("session_id")
+                    if sid and sid != exclude_session_id:
                         # Found — load into window_states immediately
                         logger.debug("session_map entry found for window %s", window_name)
                         await self.load_session_map()
@@ -409,80 +415,80 @@ class SessionManager:
 
     # --- Thread binding management ---
 
-    def bind_thread(self, user_id: int, thread_id: int, window_name: str) -> None:
+    def bind_thread(self, chat_id: int, thread_id: int, window_name: str) -> None:
         """Bind a Telegram topic thread to a tmux window."""
-        if user_id not in self.thread_bindings:
-            self.thread_bindings[user_id] = {}
-        self.thread_bindings[user_id][thread_id] = window_name
-        self._window_to_thread[(user_id, window_name)] = thread_id
+        if chat_id not in self.thread_bindings:
+            self.thread_bindings[chat_id] = {}
+        self.thread_bindings[chat_id][thread_id] = window_name
+        self._window_to_thread[(chat_id, window_name)] = thread_id
         self._save_state()
         logger.info(
-            f"Bound thread {thread_id} -> window {window_name} for user {user_id}"
+            f"Bound thread {thread_id} -> window {window_name} for chat {chat_id}"
         )
 
-    def unbind_thread(self, user_id: int, thread_id: int) -> str | None:
+    def unbind_thread(self, chat_id: int, thread_id: int) -> str | None:
         """Remove a thread binding. Returns the previously bound window name, or None."""
-        bindings = self.thread_bindings.get(user_id)
+        bindings = self.thread_bindings.get(chat_id)
         if not bindings or thread_id not in bindings:
             return None
         window_name = bindings.pop(thread_id)
-        self._window_to_thread.pop((user_id, window_name), None)
+        self._window_to_thread.pop((chat_id, window_name), None)
         if not bindings:
-            del self.thread_bindings[user_id]
+            del self.thread_bindings[chat_id]
         self._save_state()
         logger.info(
-            f"Unbound thread {thread_id} (was {window_name}) for user {user_id}"
+            f"Unbound thread {thread_id} (was {window_name}) for chat {chat_id}"
         )
         return window_name
 
-    def get_window_for_thread(self, user_id: int, thread_id: int) -> str | None:
+    def get_window_for_thread(self, chat_id: int, thread_id: int) -> str | None:
         """Look up the window bound to a thread."""
-        bindings = self.thread_bindings.get(user_id)
+        bindings = self.thread_bindings.get(chat_id)
         if not bindings:
             return None
         return bindings.get(thread_id)
 
-    def get_thread_for_window(self, user_id: int, window_name: str) -> int | None:
+    def get_thread_for_window(self, chat_id: int, window_name: str) -> int | None:
         """Reverse lookup: get thread_id for a window (O(1) via reverse index)."""
-        return self._window_to_thread.get((user_id, window_name))
+        return self._window_to_thread.get((chat_id, window_name))
 
-    def get_all_thread_windows(self, user_id: int) -> dict[int, str]:
-        """Get all thread bindings for a user."""
-        return dict(self.thread_bindings.get(user_id, {}))
+    def get_all_thread_windows(self, chat_id: int) -> dict[int, str]:
+        """Get all thread bindings for a chat."""
+        return dict(self.thread_bindings.get(chat_id, {}))
 
     def resolve_window_for_thread(
-        self, user_id: int, thread_id: int | None,
+        self, chat_id: int, thread_id: int | None,
     ) -> str | None:
-        """Resolve the tmux window for a user's thread.
+        """Resolve the tmux window for a chat's thread.
 
         Returns None if thread_id is None or the thread is not bound.
         """
         if thread_id is None:
             return None
-        return self.get_window_for_thread(user_id, thread_id)
+        return self.get_window_for_thread(chat_id, thread_id)
 
     def iter_thread_bindings(self) -> Iterator[tuple[int, int, str]]:
-        """Iterate all thread bindings as (user_id, thread_id, window_name).
+        """Iterate all thread bindings as (chat_id, thread_id, window_name).
 
         Provides encapsulated access to thread_bindings without exposing
         the internal data structure directly.
         """
-        for user_id, bindings in self.thread_bindings.items():
+        for chat_id, bindings in self.thread_bindings.items():
             for thread_id, window_name in bindings.items():
-                yield user_id, thread_id, window_name
+                yield chat_id, thread_id, window_name
 
     async def find_users_for_session(
         self, session_id: str,
     ) -> list[tuple[int, str, int]]:
-        """Find all users whose thread-bound window maps to the given session_id.
+        """Find all chats whose thread-bound window maps to the given session_id.
 
-        Returns list of (user_id, window_name, thread_id) tuples.
+        Returns list of (chat_id, window_name, thread_id) tuples.
         """
         result: list[tuple[int, str, int]] = []
-        for user_id, thread_id, window_name in self.iter_thread_bindings():
+        for chat_id, thread_id, window_name in self.iter_thread_bindings():
             resolved = await self.resolve_session_for_window(window_name)
             if resolved and resolved.session_id == session_id:
-                result.append((user_id, window_name, thread_id))
+                result.append((chat_id, window_name, thread_id))
         return result
 
     # --- Tmux helpers ---
