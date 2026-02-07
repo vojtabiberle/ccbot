@@ -71,7 +71,9 @@ async def update_status_message(
     if interactive_window == window_name:
         # Chat is in interactive mode for THIS window
         if is_interactive_ui(pane_text):
-            # Interactive UI still showing — skip status update (user is interacting)
+            # Interactive UI still showing — refresh in case content changed
+            # (e.g. multi-question AskUserQuestion advancing to next question)
+            await handle_interactive_ui(bot, chat_id, window_name, thread_id)
             return
         # Interactive UI gone — clear interactive mode, fall through to status check.
         # Don't re-check for new UI this cycle (the old one just disappeared).

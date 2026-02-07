@@ -42,6 +42,9 @@ _interactive_msgs: dict[tuple[int, int], int] = {}
 # Track interactive mode: (chat_id, thread_id_or_0) -> window_name
 _interactive_mode: dict[tuple[int, int], str] = {}
 
+# Track last-sent interactive content to skip no-op edits: (chat_id, thread_id_or_0) -> text
+_interactive_content: dict[tuple[int, int], str] = {}
+
 
 def get_interactive_window(chat_id: int, thread_id: int | None = None) -> str | None:
     """Get the window name for chat's interactive mode."""
@@ -152,6 +155,10 @@ async def handle_interactive_ui(
     # Check if we have an existing interactive message to edit
     existing_msg_id = _interactive_msgs.get(ikey)
     if existing_msg_id:
+        # Skip edit if content hasn't changed (avoids unnecessary API calls
+        # from the status poller refreshing every cycle)
+        if text == _interactive_content.get(ikey):
+            return True
         try:
             await bot.edit_message_text(
                 chat_id=chat_id,
@@ -160,6 +167,7 @@ async def handle_interactive_ui(
                 reply_markup=keyboard,
                 link_preview_options=NO_LINK_PREVIEW,
             )
+            _interactive_content[ikey] = text
             _interactive_mode[ikey] = window_name
             return True
         except Exception:
@@ -175,6 +183,7 @@ async def handle_interactive_ui(
     )
     if sent:
         _interactive_msgs[ikey] = sent.message_id
+        _interactive_content[ikey] = text
         _interactive_mode[ikey] = window_name
         return True
     return False
@@ -187,6 +196,7 @@ async def clear_interactive_msg(
     ikey = (chat_id, thread_id or 0)
     msg_id = _interactive_msgs.pop(ikey, None)
     _interactive_mode.pop(ikey, None)
+    _interactive_content.pop(ikey, None)
     logger.debug("Clear interactive msg: chat=%d, thread=%s, msg_id=%s", chat_id, thread_id, msg_id)
     if bot and msg_id:
         try:
