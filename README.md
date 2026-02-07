@@ -51,7 +51,12 @@ uv sync
 3. Select your bot, then go to **Settings** > **Bot Settings**
 4. Enable **Threaded Mode**
 
-**2. Configure environment variables:**
+**2. Set up a Telegram group:**
+
+1. Create a Telegram group and enable **Topics** (Group Settings > Topics)
+2. Add your bot to the group and **promote it to Admin** (required to receive all messages and manage topics)
+
+**3. Configure environment variables:**
 
 ```bash
 cp .env.example .env
@@ -62,7 +67,7 @@ cp .env.example .env
 | Variable | Description |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
-| `ALLOWED_USERS` | Comma-separated Telegram user IDs |
+| `ALLOWED_USERS` | Comma-separated Telegram user IDs (send `/start` to [@userinfobot](https://t.me/userinfobot) to find yours) |
 
 **Optional:**
 

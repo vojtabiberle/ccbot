@@ -48,7 +48,12 @@ uv sync
 3. 选择你的 Bot，进入 **Settings** > **Bot Settings**
 4. 启用 **Threaded Mode**（话题模式）
 
-**2. 配置环境变量：**
+**2. 设置 Telegram 群组：**
+
+1. 创建 Telegram 群组并启用**话题**（群组设置 > 话题）
+2. 将 Bot 添加到群组并**设为管理员**（必须，否则 Bot 无法接收所有消息和管理话题）
+
+**3. 配置环境变量：**
 
 ```bash
 cp .env.example .env
@@ -59,7 +64,7 @@ cp .env.example .env
 | 变量 | 说明 |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | 从 @BotFather 获取的 Bot Token |
-| `ALLOWED_USERS` | 逗号分隔的 Telegram 用户 ID |
+| `ALLOWED_USERS` | 逗号分隔的 Telegram 用户 ID（向 [@userinfobot](https://t.me/userinfobot) 发送 `/start` 获取） |
 
 **可选项：**
 
