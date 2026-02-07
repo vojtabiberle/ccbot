@@ -153,6 +153,22 @@ _RE_CHECKBOX = re.compile(r"^\s*[☐☑✓]\s+(.+)")
 _RE_NUMBERED = re.compile(r"^\s*(?:❯\s*)?\d+\.\s+(.+)")
 
 
+def parse_cursor_index(content: str) -> int:
+    """Find the 0-based index of the currently focused option (❯ marker).
+
+    Scans option lines (numbered or checkbox) and returns the index of the
+    one containing the ``❯`` cursor.  Returns 0 if no cursor marker found.
+    """
+    option_idx = 0
+    for line in content.split("\n"):
+        is_option = _RE_NUMBERED.match(line) or _RE_CHECKBOX.match(line)
+        if is_option:
+            if "❯" in line:
+                return option_idx
+            option_idx += 1
+    return 0
+
+
 def parse_options(content: str) -> list[str]:
     """Parse option labels from interactive UI content.
 

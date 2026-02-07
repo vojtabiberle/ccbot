@@ -3,6 +3,7 @@
 from ccbot.terminal_parser import (
     extract_interactive_content,
     is_interactive_ui,
+    parse_cursor_index,
     parse_options,
     parse_status_line,
 )
@@ -208,3 +209,34 @@ class TestParseOptions:
         result = parse_options(PANE_PERMISSION_PROMPT_V2)
         assert "Yes" in result
         assert "No" in result
+
+
+# ── parse_cursor_index ─────────────────────────────────────────────────
+
+
+class TestParseCursorIndex:
+    def test_cursor_on_first_numbered(self):
+        content = "  ❯ 1. Yes\n    2. No\n    3. Maybe"
+        assert parse_cursor_index(content) == 0
+
+    def test_cursor_on_second_numbered(self):
+        content = "    1. Yes\n  ❯ 2. No\n    3. Maybe"
+        assert parse_cursor_index(content) == 1
+
+    def test_cursor_on_third_numbered(self):
+        content = "    1. Yes\n    2. No\n  ❯ 3. Maybe"
+        assert parse_cursor_index(content) == 2
+
+    def test_no_cursor_defaults_to_zero(self):
+        content = "  ☐ Option A\n  ☐ Option B"
+        assert parse_cursor_index(content) == 0
+
+    def test_permission_prompt_v2_default(self):
+        # ❯ is on option 1 (index 0)
+        assert parse_cursor_index(PANE_PERMISSION_PROMPT_V2) == 0
+
+    def test_no_options_returns_zero(self):
+        assert parse_cursor_index("Just some text") == 0
+
+    def test_empty_returns_zero(self):
+        assert parse_cursor_index("") == 0

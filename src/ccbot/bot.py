@@ -719,13 +719,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         thread_id = _get_thread_id(update)
         w = await get_mux().find_window_by_name(window_name)
         if w:
-            # Navigate to top first (enough Ups to reach first option)
-            for _ in range(10):
-                await get_mux().send_keys(w.window_id, "Up", enter=False, literal=False)
-                await asyncio.sleep(0.02)
-            # Navigate down to the target option
-            for _ in range(target_idx):
-                await get_mux().send_keys(w.window_id, "Down", enter=False, literal=False)
+            # Read current cursor position to compute relative movement
+            # (avoids wrapping bugs from blindly sending Up keys)
+            from .terminal_parser import parse_cursor_index
+            pane_text = await get_mux().capture_pane(w.window_id)
+            current_idx = parse_cursor_index(pane_text) if pane_text else 0
+            delta = target_idx - current_idx
+            key = "Down" if delta > 0 else "Up"
+            for _ in range(abs(delta)):
+                await get_mux().send_keys(w.window_id, key, enter=False, literal=False)
                 await asyncio.sleep(0.02)
             await asyncio.sleep(0.1)
             await get_mux().send_keys(w.window_id, "Enter", enter=False, literal=False)
@@ -859,11 +861,11 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
         if get_interactive_msg_id(chat_id, thread_id):
             await clear_interactive_msg(chat_id, bot, thread_id)
 
-        # In interactive notify mode, skip non-interactive messages.
-        # Interactive tools (AskUserQuestion, ExitPlanMode) are already handled
-        # above. Permission prompts are handled via status polling independently.
+        # In interactive notify mode, suppress tool output but keep
+        # assistant text responses (e.g. Claude's reaction after denied tools).
         if config.notify_mode == "interactive":
-            continue
+            if not (msg.content_type == "text" and msg.role == "assistant"):
+                continue
 
         parts = build_response_parts(
             msg.text, msg.is_complete, msg.content_type, msg.role,
