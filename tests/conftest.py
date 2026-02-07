@@ -157,6 +157,22 @@ PANE_PERMISSION_PROMPT_V2 = """\
 ───────────────────────────────────────────────────
 """
 
+PANE_PERMISSION_PROMPT_BASH = """\
+Some previous output
+
+──────────────────────────────── Bash command ────────────────────────────────────
+
+   docker compose up -d
+   Start WordPress and MariaDB containers
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for docker compose commands in /home/user/project
+   3. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain
+"""
+
 PANE_RESTORE_CHECKPOINT = """\
   Restore the code to this checkpoint?
 

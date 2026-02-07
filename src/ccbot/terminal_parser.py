@@ -68,8 +68,14 @@ UI_PATTERNS: list[UIPattern] = [
     ),
     UIPattern(
         name="PermissionPrompt",
-        top=(re.compile(r"^\s*Do you want to"),),
+        top=(
+            # v4.x: separator line above command block (includes command details)
+            re.compile(r"^─{5,}\s*.+\s*─{5,}$"),
+            # Legacy / fallback: "Do you want to" without preceding separator
+            re.compile(r"^\s*Do you want to"),
+        ),
         bottom=(
+            re.compile(r"Esc to cancel .* Tab to amend"),
             re.compile(r"Enter confirm .* Esc cancel"),
             re.compile(r"^\s*Esc to cancel"),  # legacy format
         ),
