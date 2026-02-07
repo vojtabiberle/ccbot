@@ -6,6 +6,7 @@ from ccbot.terminal_parser import (
     parse_cursor_index,
     parse_options,
     parse_status_line,
+    parse_suggestion,
 )
 
 from conftest import (
@@ -19,6 +20,8 @@ from conftest import (
     PANE_RESTORE_CHECKPOINT,
     PANE_STATUS_DOT,
     PANE_STATUS_STAR,
+    PANE_SUGGESTION_PROMPT,
+    PANE_SUGGESTION_WITH_TASKS,
 )
 
 
@@ -251,3 +254,48 @@ class TestParseCursorIndex:
 
     def test_empty_returns_zero(self):
         assert parse_cursor_index("") == 0
+
+
+# ── parse_suggestion ─────────────────────────────────────────────────
+
+
+class TestParseSuggestion:
+    def test_detects_suggestion(self):
+        result = parse_suggestion(PANE_SUGGESTION_PROMPT)
+        assert result == "suggestion text here"
+
+    def test_detects_suggestion_with_tasks(self):
+        result = parse_suggestion(PANE_SUGGESTION_WITH_TASKS)
+        assert result == "Run the test suite to verify changes"
+
+    def test_ignores_numbered_options(self):
+        """Numbered ❯ lines (inside interactive UIs) are not suggestions."""
+        pane = (
+            "─────────────────────────\n"
+            "❯ 1. Yes\n"
+            "  2. No\n"
+        )
+        assert parse_suggestion(pane) is None
+
+    def test_ignores_plain_text(self):
+        assert parse_suggestion(PANE_PLAIN_TEXT) is None
+
+    def test_ignores_interactive_ui(self):
+        assert parse_suggestion(PANE_PERMISSION_PROMPT_V2) is None
+
+    def test_empty_pane(self):
+        assert parse_suggestion("") is None
+
+    def test_none_pane(self):
+        assert parse_suggestion("") is None
+
+    def test_no_separator_before_arrow(self):
+        """❯ without a preceding separator is not a suggestion."""
+        pane = "some text\n❯ not a suggestion\nmore text"
+        assert parse_suggestion(pane) is None
+
+    def test_separator_beyond_bottom_10(self):
+        """Suggestion must be in the bottom 10 lines to be detected."""
+        lines = ["─────────────────────────", "❯ old suggestion"] + ["filler"] * 15
+        pane = "\n".join(lines)
+        assert parse_suggestion(pane) is None

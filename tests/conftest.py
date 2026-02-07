@@ -198,3 +198,21 @@ Previous content
 
 ✻ Working on task...
 """
+
+PANE_SUGGESTION_PROMPT = """\
+Some previous output
+
+─────────────────────────
+❯ suggestion text here
+─────────────────────────
+  ⏵⏵ accept edits...
+"""
+
+PANE_SUGGESTION_WITH_TASKS = """\
+  Task 1 completed
+  Task 2 completed
+
+─────────────────────────────────────────
+❯ Run the test suite to verify changes
+─────────────────────────────────────────
+"""

@@ -34,3 +34,6 @@ CB_ASK_ENTER = "aq:enter:" # aq:enter:<window>
 CB_ASK_REFRESH = "aq:ref:" # aq:ref:<window>
 CB_ASK_OPTION = "aq:opt:"  # aq:opt:<index>:<window>
 
+# Suggestion prompt
+CB_SUGGESTION_SEND = "sg:send:"  # sg:send:<window_name>
+

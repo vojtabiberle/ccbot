@@ -5,11 +5,13 @@ Parses captured tmux pane content to detect:
     RestoreCheckpoint) via regex-based UIPattern matching with top/bottom
     delimiters.
   - Status line (spinner characters + working text) by scanning from bottom up.
+  - Idle suggestion prompt (❯ text after ─── separator) near bottom of pane.
 
 All Claude Code text patterns live here. To support a new UI type or
 a changed Claude Code version, edit UI_PATTERNS / STATUS_SPINNERS.
 
-Key functions: is_interactive_ui(), extract_interactive_content(), parse_status_line().
+Key functions: is_interactive_ui(), extract_interactive_content(),
+parse_status_line(), parse_suggestion().
 """
 
 from __future__ import annotations
@@ -211,4 +213,36 @@ def parse_status_line(pane_text: str) -> str | None:
             continue
         if line[0] in STATUS_SPINNERS:
             return line[1:].strip()
+    return None
+
+
+# ── Suggestion prompt parsing ─────────────────────────────────────────
+
+_RE_NUMBERED_SUGGESTION = re.compile(r"^❯\s+\d+\.")
+
+
+def parse_suggestion(pane_text: str) -> str | None:
+    """Extract the idle suggestion text from the Claude Code input prompt.
+
+    When Claude finishes a task it may show a gray suggestion like:
+        ─────────────────────────
+        ❯ suggestion text here
+        ─────────────────────────
+
+    Scans bottom 10 lines for a ``─{5,}`` separator followed by ``❯ <text>``.
+    Numbered lines (``❯ 1.``) are excluded to avoid matching interactive UIs.
+    Returns the suggestion text, or None if not found.
+    """
+    if not pane_text:
+        return None
+
+    lines = pane_text.strip().split("\n")
+    search = lines[-10:] if len(lines) > 10 else lines
+    for i in range(len(search) - 1):
+        if _RE_LONG_DASH.match(search[i].strip()):
+            next_line = search[i + 1].strip()
+            if next_line.startswith("❯ ") and not _RE_NUMBERED_SUGGESTION.match(
+                next_line
+            ):
+                return next_line[2:].strip()
     return None

@@ -69,6 +69,7 @@ from .handlers.callback_data import (
     CB_HISTORY_NEXT,
     CB_HISTORY_PREV,
     CB_SCREENSHOT_REFRESH,
+    CB_SUGGESTION_SEND,
 )
 from .handlers.directory_browser import (
     BROWSE_DIRS_KEY,
@@ -99,7 +100,11 @@ from .handlers.message_queue import (
 )
 from .handlers.message_sender import safe_edit, safe_reply, safe_send
 from .handlers.response_builder import build_response_parts
-from .handlers.status_polling import status_poll_loop
+from .handlers.status_polling import (
+    clear_suggestion,
+    get_suggestion_text,
+    status_poll_loop,
+)
 from .screenshot import text_to_image
 from .session import session_manager
 from .session_monitor import NewMessage, SessionMonitor
@@ -464,6 +469,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await update.message.chat.send_action(ChatAction.TYPING)
     clear_status_msg_info(chat_id, thread_id)
+    await clear_suggestion(chat_id, context.bot, thread_id)
 
     success, message = await session_manager.send_to_window(wname, text)
     if not success:
@@ -807,6 +813,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         thread_id = _get_thread_id(update)
         await handle_interactive_ui(context.bot, chat_id, window_name, thread_id)
         await query.answer("🔄")
+
+    # Suggestion prompt: Send
+    elif data.startswith(CB_SUGGESTION_SEND):
+        window_name = data[len(CB_SUGGESTION_SEND):]
+        thread_id = _get_thread_id(update)
+        suggestion = get_suggestion_text(chat_id, thread_id)
+        if suggestion:
+            await session_manager.send_to_window(window_name, suggestion)
+            await clear_suggestion(chat_id, context.bot, thread_id)
+        await query.answer("✅ Sent")
 
 
 # --- Streaming response / notifications ---

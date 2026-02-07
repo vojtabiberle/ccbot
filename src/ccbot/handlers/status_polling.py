@@ -3,6 +3,7 @@
 Provides background polling of terminal status lines for all active users:
   - Detects Claude Code status (working, waiting, etc.)
   - Detects interactive UIs (permission prompts) not triggered via JSONL
+  - Detects idle suggestion prompts and surfaces them in Telegram
   - Updates status messages in Telegram
   - Polls thread_bindings (each topic = one window)
   - Periodically probes topic existence via unpin_all_forum_topic_messages
@@ -14,18 +15,20 @@ Key components:
   - TOPIC_CHECK_INTERVAL: Topic existence probe frequency (60 seconds)
   - status_poll_loop: Background polling task
   - update_status_message: Poll and enqueue status updates
+  - clear_suggestion / get_suggestion_text: Suggestion message lifecycle
 """
 
 import asyncio
 import logging
 import time
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 
 from ..session import session_manager
-from ..terminal_parser import is_interactive_ui, parse_status_line
+from ..terminal_parser import is_interactive_ui, parse_status_line, parse_suggestion
 from ..multiplexer import get_mux
+from .callback_data import CB_SUGGESTION_SEND
 from .interactive_ui import (
     clear_interactive_msg,
     get_interactive_msg_id,
@@ -34,6 +37,7 @@ from .interactive_ui import (
 )
 from .cleanup import clear_topic_state
 from .message_queue import enqueue_status_update, get_message_queue
+from .message_sender import rate_limit_send_message
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,72 @@ STATUS_POLL_INTERVAL = 1.0  # seconds - faster response (rate limiting at send l
 
 # Topic existence probe interval
 TOPIC_CHECK_INTERVAL = 60.0  # seconds
+
+# Suggestion message tracking: (chat_id, thread_id) -> message_id / text
+_suggestion_msgs: dict[tuple[int, int], int] = {}
+_suggestion_text: dict[tuple[int, int], str] = {}
+
+
+def _ikey(chat_id: int, thread_id: int | None) -> tuple[int, int]:
+    """Build the dict key for suggestion state."""
+    return (chat_id, thread_id or 0)
+
+
+async def _send_suggestion_msg(
+    bot: Bot,
+    chat_id: int,
+    window_name: str,
+    text: str,
+    thread_id: int | None,
+) -> None:
+    """Send (or replace) the suggestion Telegram message."""
+    ikey = _ikey(chat_id, thread_id)
+
+    # Delete old message if present
+    old_msg_id = _suggestion_msgs.get(ikey)
+    if old_msg_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
+        except Exception:
+            pass
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "✅ Send",
+            callback_data=f"{CB_SUGGESTION_SEND}{window_name}"[:64],
+        ),
+    ]])
+    msg = await rate_limit_send_message(
+        bot,
+        chat_id,
+        f"❓ {text}",
+        message_thread_id=thread_id,
+        reply_markup=keyboard,
+    )
+    if msg:
+        _suggestion_msgs[ikey] = msg.message_id
+        _suggestion_text[ikey] = text
+
+
+async def clear_suggestion(
+    chat_id: int, bot: Bot, thread_id: int | None = None,
+) -> None:
+    """Delete the suggestion message and clear tracking state."""
+    ikey = _ikey(chat_id, thread_id)
+    msg_id = _suggestion_msgs.pop(ikey, None)
+    _suggestion_text.pop(ikey, None)
+    if msg_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+
+
+def get_suggestion_text(
+    chat_id: int, thread_id: int | None = None,
+) -> str | None:
+    """Return the stored suggestion text for a chat/thread, or None."""
+    return _suggestion_text.get(_ikey(chat_id, thread_id))
 
 
 async def update_status_message(
@@ -94,6 +164,18 @@ async def update_status_message(
     if should_check_new_ui and is_interactive_ui(pane_text):
         await handle_interactive_ui(bot, chat_id, window_name, thread_id)
         return
+
+    # Suggestion prompt detection
+    ikey = _ikey(chat_id, thread_id)
+    suggestion = parse_suggestion(pane_text)
+    if suggestion:
+        if _suggestion_text.get(ikey) != suggestion:
+            await _send_suggestion_msg(bot, chat_id, window_name, suggestion, thread_id)
+        # Suggestion is showing — skip status line check
+        return
+    elif ikey in _suggestion_msgs:
+        # Suggestion gone (Claude started working) — clean up
+        await clear_suggestion(chat_id, bot, thread_id)
 
     # Normal status line check
     status_line = parse_status_line(pane_text)
