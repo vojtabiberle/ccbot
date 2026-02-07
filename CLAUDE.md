@@ -1,276 +1,39 @@
 # CLAUDE.md
 
-## Development Principles
+For detailed architecture, diagrams, data mappings, and message flows see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-### No Message Truncation
+## Development Rules
 
-Historical messages (tool_use summaries, tool_result text, user/assistant messages) are always kept in full — no character-level truncation at the parsing layer. Long text is handled exclusively at the send layer: `split_message` splits by Telegram's 4096-character limit; real-time messages get `[1/N]` text suffixes, history pages get inline keyboard navigation.
+### Code Quality
 
-### History Pagination Shows Latest First
+- Run `pyright src/ccbot/` after every code change. Ensure 0 errors before committing.
+- Every Python source file must start with a module-level docstring (`"""..."""`). First line = one-sentence summary; subsequent lines = responsibilities, key components, module relationships. Update when core features change.
 
-`/history` defaults to the last page (newest messages). Users browse older content via the "◀ Older" button.
+### Telegram Conventions
 
-### Follow Telegram Bot Best Practices
+- All messages use `parse_mode="MarkdownV2"` via `telegramify-markdown`. Use `safe_reply`/`safe_edit`/`safe_send` helpers (auto-convert + plain text fallback). Internal queue/UI code (`message_queue.py`, `interactive_ui.py`) calls Telegram API directly with its own fallback.
+- Prefer inline keyboards over reply keyboards; use `edit_message_text` for in-place updates; keep callback data under 64 bytes; use `answer_callback_query` for instant feedback.
+- Flood control: minimum 1.1s between messages per user. Outbound messages go through `rate_limit_send()`.
 
-Interaction design follows Telegram Bot platform best practices: prefer inline keyboards over reply keyboards; use `edit_message_text` for in-place updates instead of sending new messages; keep callback data compact (64-byte limit); use `answer_callback_query` for instant feedback.
+### Core Abstractions
 
-### File Header Docstring Convention
+- **Window as the core unit**: all logic operates on multiplexer windows (tmux window = Zellij tab), not directories. Window names default to directory name with auto-suffix (e.g., `project-2`).
+- **Topic-only architecture**: 1 Topic = 1 Window = 1 Session. No `active_sessions`, no `/list` command, no General topic routing, no backward-compatibility for non-topic modes.
+- **No message truncation**: full content preserved at parse layer. Splitting only at send layer (`split_message`, 4096-char limit).
+- `/history` defaults to the last page (newest messages).
 
-Every Python source file must start with a module-level docstring (`"""..."""`) describing its core purpose. Requirements:
+### Message Queue & Delivery
 
-- **Purpose clear within 10 lines**: An AI or developer reading only the first 10 lines can determine the file's role, responsibilities, and key classes/functions.
-- **Structure**: First line is a one-sentence summary; subsequent lines describe core responsibilities, key components (class/function names), and relationships with other modules.
-- **Keep updated**: When a file undergoes major changes (adding/removing core features, changing module responsibilities, renaming key classes/functions), update the header docstring. Minor bug fixes or internal refactors do not require updates.
+- Per-user FIFO queues. Consecutive content messages for the same window are merged (up to 3800 chars).
+- `tool_use` breaks the merge chain (sent separately, message ID recorded). `tool_result` is edited into the `tool_use` message.
+- Status messages are edited into the first content message to reduce message count.
 
-### Code Quality Checks
+### Multiplexer Backend
 
-After every code change, run `pyright src/ccbot/` to check for type errors. Ensure 0 errors before committing.
+- `MULTIPLEXER=tmux` (default) or `MULTIPLEXER=zellij`. Session name: `MUX_SESSION_NAME` (falls back to `TMUX_SESSION_NAME`, then `"ccbot"`).
+- Zellij limitations: no ANSI color capture, session must pre-exist, focus ops serialized via asyncio.Lock.
 
-### Unified MarkdownV2 Formatting
+### Operations
 
-All messages sent to Telegram use `parse_mode="MarkdownV2"`. The `telegramify-markdown` library converts standard Markdown to Telegram MarkdownV2 format. Handler code should use `safe_reply`/`safe_edit`/`safe_send` helper functions, which handle MarkdownV2 conversion automatically and fall back to plain text on parse failure. Internal queue/UI code (`message_queue.py`, `interactive_ui.py`) calls `bot.send_message`/`bot.edit_message_text` directly with its own MarkdownV2 fallback for fine-grained control over send sequencing.
-
-### Window as the Core Unit
-
-All logic (message sending, history viewing, notifications) operates on multiplexer windows as the core unit, not project directories (cwd). "Window" is the abstraction term used throughout the codebase — it maps to a tmux window or a Zellij tab. Window names default to the directory name (e.g., `project`). The same directory can have multiple windows (auto-suffixed, e.g., `project-2`), each independently associated with its own Claude session.
-
-### Topic-Only Architecture (No Backward Compatibility)
-
-The bot operates exclusively in Telegram Forum (topics) mode. There is **no** `active_sessions` mapping, **no** `/list` command, **no** General topic routing, and **no** backward-compatibility logic for older non-topic modes. Every code path assumes named topics.
-
-**1 Topic = 1 Window = 1 Session.** Each Telegram topic maps to exactly one multiplexer window (tmux window or Zellij tab).
-
-```
-┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│  Topic ID   │ ───▶ │ Window Name │ ───▶ │ Session ID  │
-│  (Telegram) │      │ (mux window)│      │  (Claude)   │
-└─────────────┘      └─────────────┘      └─────────────┘
-     thread_bindings      session_map.json
-     (state.json)         (written by hook)
-```
-
-**Mapping 1: Topic → Window (thread_bindings)**
-
-```python
-# session.py: SessionManager
-thread_bindings: dict[int, dict[int, str]]  # user_id → {thread_id → window_name}
-```
-
-- Storage: memory + `~/.ccbot/state.json`
-- Written when: user creates a new session via the directory browser in a topic
-- Purpose: route user messages to the correct multiplexer window
-
-**Mapping 2: Window → Session (session_map.json)**
-
-```python
-# session_map.json (key format: "mux_session:window_name")
-{
-  "ccbot:project": {"session_id": "uuid-xxx", "cwd": "/path/to/project"},
-  "ccbot:project-2": {"session_id": "uuid-yyy", "cwd": "/path/to/project"}
-}
-```
-
-- Storage: `~/.ccbot/session_map.json`
-- Written when: Claude Code's `SessionStart` hook fires
-- Property: one window maps to one session; session_id changes after `/clear`
-- Purpose: SessionMonitor uses this mapping to decide which sessions to watch
-
-**Outbound message flow**
-
-```
-User sends "hello" in topic (thread_id=42)
-    │
-    ▼
-thread_bindings[user_id][42] → "project"  (get bound window)
-    │
-    ▼
-send_to_window("project", "hello")        (send to multiplexer)
-```
-
-**Inbound message flow**
-
-```
-SessionMonitor reads new message (session_id = "uuid-xxx")
-    │
-    ▼
-Iterate thread_bindings, find (user, thread) whose window maps to this session
-    │
-    ▼
-Deliver message to user in the correct topic (thread_id)
-```
-
-**New topic flow**: First message in an unbound topic → directory browser → select directory → create window → bind topic → forward pending message.
-
-**Topic lifecycle**: Closing (or deleting) a topic auto-kills the associated multiplexer window and unbinds the thread. Stale bindings (window deleted externally) are cleaned up by the status polling loop.
-
-### Telegram Flood Control Protection
-
-The bot implements send rate limiting to avoid triggering Telegram's flood control:
-- Minimum 1.1-second interval between messages per user
-- Status polling interval is 1 second (send layer has rate limiting protection)
-- Automated outbound messages (queue worker, status updates) go through `rate_limit_send()` which checks and waits
-
-### Message Queue Architecture
-
-The bot uses per-user message queues + worker pattern for all send tasks, ensuring:
-- Messages are sent in receive order (FIFO)
-- Status messages always follow content messages
-- Multi-user concurrent processing without interference
-
-**Message merging**: The worker automatically merges consecutive mergeable content messages on dequeue, reducing API calls:
-- Content messages for the same window can be merged (including text, thinking)
-- tool_use breaks the merge chain and is sent separately (message ID recorded for later editing)
-- tool_result breaks the merge chain and is edited into the tool_use message (preventing order confusion)
-- Merging stops when combined length exceeds 3800 characters (to avoid pagination)
-
-### Status Message Handling
-
-Status messages (Claude status line) use special handling to optimize user experience:
-
-**Conversion**: The status message is edited into the first content message, reducing message count:
-- When a status message exists, the first content message updates it via edit
-- Subsequent content messages are sent as new messages
-
-**Polling**: A background task polls terminal status for all active windows at 1-second intervals. Send-layer rate limiting ensures flood control is not triggered.
-
-### Session Lifecycle Management
-
-Session monitor tracks window → session_id mappings via `session_map.json` (written by hook):
-
-**Startup cleanup**: On bot startup, all tracked sessions not present in session_map are cleaned up, preventing monitoring of closed sessions.
-
-**Runtime change detection**: Each polling cycle checks for session_map changes:
-- Window's session_id changed (e.g., after `/clear`) → clean up old session
-- Window deleted → clean up corresponding session
-
-### Performance Optimizations
-
-**mtime cache**: The monitoring loop maintains an in-memory file mtime cache, skipping reads for unchanged files.
-
-**Byte offset incremental reads**: Each tracked session records `last_byte_offset`, reading only new content. File truncation (offset > file_size) is detected and offset is auto-reset.
-
-**Status deduplication**: The worker compares `last_text` when processing status updates; identical content skips the edit, reducing API calls.
-
-### Multiplexer Backend Selection
-
-The bot supports two terminal multiplexers, selected via the `MULTIPLEXER` env var:
-- `MULTIPLEXER=tmux` (default) — uses libtmux, full ANSI color support for screenshots
-- `MULTIPLEXER=zellij` — uses Zellij CLI via subprocess, with these limitations:
-  - No ANSI color capture (`/screenshot` produces plain-text images)
-  - Session must pre-exist (`zellij -s ccbot` before starting the bot)
-  - All focus-dependent operations are serialized via asyncio.Lock
-
-Session name is configured via `MUX_SESSION_NAME` (falls back to `TMUX_SESSION_NAME`, then `"ccbot"`).
-
-### Service Restart
-
-To restart the ccbot service after code changes, run `./scripts/restart.sh`. The script detects the multiplexer backend (via `MULTIPLEXER` env var, defaulting to tmux), checks whether a running `uv run ccbot` process exists in the `__main__` window, sends Ctrl-C to stop it, restarts, and outputs startup logs for confirmation.
-
-### Hook Configuration
-
-Auto-install: `ccbot hook --install`
-
-Or manually configure in `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [{ "type": "command", "command": "ccbot hook", "timeout": 5 }]
-      }
-    ]
-  }
-}
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Telegram Bot (bot.py)                       │
-│  - Topic-based routing: 1 topic = 1 window = 1 session             │
-│  - /history: Paginated message history (default: latest page)      │
-│  - /screenshot: Capture pane as PNG                                │
-│  - /esc: Send Escape to interrupt Claude                           │
-│  - Send text → Claude Code via multiplexer keystrokes              │
-│  - Forward /commands to Claude Code                                │
-│  - Create sessions via directory browser in unbound topics         │
-│  - Tool use → tool result: edit message in-place                   │
-│  - Interactive UI: AskUserQuestion / ExitPlanMode / Permission     │
-│  - Per-user message queue + worker (merge, rate limit)             │
-│  - MarkdownV2 output with auto fallback to plain text              │
-├──────────────────────┬──────────────────────────────────────────────┤
-│  markdown_v2.py      │  telegram_sender.py                         │
-│  MD → MarkdownV2     │  split_message (4096 limit)                 │
-│  + expandable quotes │                                             │
-├──────────────────────┴──────────────────────────────────────────────┤
-│  terminal_parser.py                                                 │
-│  - Detect interactive UIs (AskUserQuestion, ExitPlanMode, etc.)    │
-│  - Parse status line (spinner + working text)                      │
-└──────────┬──────────────────────────────┬───────────────────────────┘
-           │                              │
-           │ Notify (NewMessage callback) │ Send (multiplexer keys)
-           │                              │
-┌──────────┴──────────────┐    ┌──────────┴───────────────────────────┐
-│  SessionMonitor         │    │  multiplexer/ package                │
-│  (session_monitor.py)   │    │  __init__.py: get_mux() singleton    │
-│  - Poll JSONL every 2s  │    │  base.py: MultiplexerBackend ABC     │
-│  - Detect mtime changes │    │  tmux_backend.py: TmuxBackend        │
-│  - Parse new lines      │    │  zellij_backend.py: ZellijBackend    │
-│  - Track pending tools  │    │  - list/find/create/kill windows     │
-│    across poll cycles   │    │  - send_keys / capture_pane          │
-└──────────┬──────────────┘    └──────────────┬──────────────────────┘
-           │                                  │
-           ▼                                  ▼
-┌────────────────────────┐         ┌─────────────────────────┐
-│  TranscriptParser      │         │  Multiplexer Windows    │
-│  (transcript_parser.py)│         │  (tmux windows or       │
-│  - Parse JSONL entries │         │   Zellij tabs)          │
-│  - Pair tool_use ↔     │         │  - Claude Code process  │
-│    tool_result         │         │  - One window per       │
-│  - Format expandable   │         │    topic/session        │
-│    quotes for thinking │         └────────────┬────────────┘
-│  - Extract history     │                      │
-└────────────────────────┘              SessionStart hook
-                                                │
-                                                ▼
-┌────────────────────────┐         ┌────────────────────────┐
-│  SessionManager        │◄────────│  Hook (hook.py)        │
-│  (session.py)          │  reads  │  - Auto-detect mux     │
-│  - Window ↔ Session    │  map    │    (tmux or Zellij)    │
-│    resolution          │         │  - Write session_map   │
-│  - Thread bindings     │         │    .json               │
-│    (topic → window)    │         └────────────────────────┘
-│  - Message history     │
-│    retrieval           │         ┌────────────────────────┐
-└────────────────────────┘────────►│  Claude Sessions       │
-                            reads  │  ~/.claude/projects/   │
-┌────────────────────────┐  JSONL  │  - sessions-index      │
-│  MonitorState          │         │  - *.jsonl files       │
-│  (monitor_state.py)    │         └────────────────────────┘
-│  - Track byte offset   │
-│  - Prevent duplicates  │
-│    after restart       │
-└────────────────────────┘
-
-State files (~/.ccbot/):
-  state.json         ─ thread bindings + window states + read offsets
-  session_map.json   ─ hook-generated window→session mapping
-  monitor_state.json ─ poll progress (byte offset) per JSONL file
-
-Env vars:
-  MULTIPLEXER        ─ "tmux" (default) or "zellij"
-  MUX_SESSION_NAME   ─ session name (falls back to TMUX_SESSION_NAME, then "ccbot")
-```
-
-**Key design decisions:**
-- **Topic-centric** — Each Telegram topic binds to one multiplexer window. No centralized session list; topics *are* the session list.
-- **Window-centric** — All state anchored to window names (e.g. `myproject`), not directories. Same directory can have multiple windows (auto-suffixed: `myproject-2`). "Window" is the abstraction term (= tmux window = Zellij tab).
-- **Pluggable multiplexer** — `MultiplexerBackend` ABC in `multiplexer/base.py`; `TmuxBackend` and `ZellijBackend` implementations; `get_mux()` singleton factory selected by `MULTIPLEXER` env var.
-- **Hook-based session tracking** — Claude Code `SessionStart` hook auto-detects multiplexer (tmux or Zellij) and writes `session_map.json`; monitor reads it each poll cycle to auto-detect session changes.
-- **Tool use ↔ tool result pairing** — `tool_use_id` tracked across poll cycles; tool result edits the original tool_use Telegram message in-place.
-- **MarkdownV2 with fallback** — All messages go through `safe_reply`/`safe_edit`/`safe_send` which convert via `telegramify-markdown` and fall back to plain text on parse failure.
-- **No truncation at parse layer** — Full content preserved; splitting at send layer respects Telegram's 4096 char limit with expandable quote atomicity.
-- Only sessions registered in `session_map.json` (via hook) are monitored
-- Notifications delivered to users via thread bindings (topic → window → session)
+- Restart service: `./scripts/restart.sh`
+- Install hook: `ccbot hook --install`
