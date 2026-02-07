@@ -1,6 +1,6 @@
 # CCBot
 
-通过 Telegram 远程控制 Claude Code 会话 — 监控、交互、管理运行在 tmux 中的 AI 编程会话。
+通过 Telegram 远程控制 Claude Code 会话 — 监控、交互、管理运行在 tmux 或 Zellij 中的 AI 编程会话。
 
 https://github.com/user-attachments/assets/15ffb38e-5eb9-4720-93b9-412e4961dc93
 
@@ -8,27 +8,28 @@ https://github.com/user-attachments/assets/15ffb38e-5eb9-4720-93b9-412e4961dc93
 
 Claude Code 运行在终端里。当你离开电脑 — 通勤路上、躺在沙发上、或者只是不在工位 — 会话仍在继续，但你失去了查看和控制的能力。
 
-CCBot 让你**通过 Telegram 无缝接管同一个会话**。核心设计思路是：它操作的是 **tmux**，而不是 Claude Code SDK。你的 Claude Code 进程始终在 tmux 窗口里运行，CCBot 只是读取它的输出并向它发送按键。这意味着：
+CCBot 让你**通过 Telegram 无缝接管同一个会话**。核心设计思路是：它操作的是**终端复用器**（tmux 或 Zellij），而不是 Claude Code SDK。你的 Claude Code 进程始终在复用器窗口里运行，CCBot 只是读取它的输出并向它发送按键。这意味着：
 
 - **从电脑无缝切换到手机** — Claude 正在执行重构？走开就是了，继续在 Telegram 上监控和回复。
-- **随时切换回电脑** — tmux 会话从未中断，直接 `tmux attach` 就能回到终端，完整的滚动历史和上下文都在。
-- **并行运行多个会话** — 每个 Telegram 话题对应一个独立的 tmux 窗口，一个聊天组里就能管理多个项目。
+- **随时切换回电脑** — 复用器会话从未中断，直接 attach 就能回到终端，完整的滚动历史和上下文都在。
+- **并行运行多个会话** — 每个 Telegram 话题对应一个独立的复用器窗口，一个聊天组里就能管理多个项目。
 
-市面上其他 Claude Code Telegram Bot 通常封装 Claude Code SDK 来创建独立的 API 会话，这些会话是隔离的 — 你无法在终端里恢复它们。CCBot 采取了不同的方式：它只是 tmux 之上的一个薄控制层，终端始终是数据源，你永远不会失去切换回去的能力。
+市面上其他 Claude Code Telegram Bot 通常封装 Claude Code SDK 来创建独立的 API 会话，这些会话是隔离的 — 你无法在终端里恢复它们。CCBot 采取了不同的方式：它只是终端复用器之上的一个薄控制层，终端始终是数据源，你永远不会失去切换回去的能力。
 
 实际上，CCBot 自身就是用这种方式开发的 — 通过 CCBot 在 Telegram 上监控和驱动 Claude Code 会话来迭代自身。
 
 ## 功能特性
 
-- **基于话题的会话** — 每个 Telegram 话题 1:1 映射到一个 tmux 窗口和 Claude 会话
+- **基于话题的会话** — 每个 Telegram 话题 1:1 映射到一个复用器窗口和 Claude 会话
+- **可插拔复用器** — 支持 tmux（默认）和 Zellij 后端
 - **实时通知** — 接收助手回复、思考过程、工具调用/结果、本地命令输出的 Telegram 消息
 - **交互式 UI** — 通过内联键盘操作 AskUserQuestion、ExitPlanMode 和权限提示
-- **发送消息** — 通过 tmux 按键将文字转发给 Claude Code
+- **发送消息** — 通过复用器按键将文字转发给 Claude Code
 - **斜杠命令转发** — 任何 `/command` 直接发送给 Claude Code（如 `/clear`、`/compact`、`/cost`）
 - **创建新会话** — 通过目录浏览器从 Telegram 启动 Claude Code 会话
-- **关闭会话** — 关闭话题自动终止关联的 tmux 窗口
+- **关闭会话** — 关闭话题自动终止关联的复用器窗口
 - **消息历史** — 分页浏览对话历史（默认显示最新）
-- **Hook 会话追踪** — 通过 `SessionStart` hook 自动关联 tmux 窗口与 Claude 会话
+- **Hook 会话追踪** — 通过 `SessionStart` hook 自动关联复用器窗口与 Claude 会话
 - **持久化状态** — 话题绑定和读取偏移量在重启后保持
 
 ## 安装
@@ -64,7 +65,8 @@ cp .env.example .env
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `TMUX_SESSION_NAME` | `ccbot` | tmux 会话名称 |
+| `MULTIPLEXER` | `tmux` | 复用器后端（`tmux` 或 `zellij`） |
+| `MUX_SESSION_NAME` | `ccbot` | 复用器会话名称（回退到 `TMUX_SESSION_NAME`） |
 | `CLAUDE_COMMAND` | `claude` | 新窗口中运行的命令 |
 | `MONITOR_POLL_INTERVAL` | `2.0` | 轮询间隔（秒） |
 
@@ -95,7 +97,7 @@ ccbot hook --install
 }
 ```
 
-Hook 会将窗口-会话映射写入 `~/.ccbot/session_map.json`，这样 Bot 就能自动追踪每个 tmux 窗口中运行的 Claude 会话 — 即使在 `/clear` 或会话重启后也能保持关联。
+Hook 会将窗口-会话映射写入 `~/.ccbot/session_map.json`，这样 Bot 就能自动追踪每个复用器窗口中运行的 Claude 会话 — 即使在 `/clear` 或会话重启后也能保持关联。Hook 会自动检测你使用的是 tmux 还是 Zellij。
 
 ## 使用方法
 
@@ -114,7 +116,7 @@ uv run ccbot
 | `/screenshot` | 截取终端屏幕 |
 | `/esc` | 发送 Escape 键中断 Claude |
 
-**Claude Code 命令（通过 tmux 转发）：**
+**Claude Code 命令（通过复用器转发）：**
 
 | 命令 | 说明 |
 |---|---|
@@ -135,15 +137,15 @@ uv run ccbot
 1. 在 Telegram 群组中创建新话题
 2. 在话题中发送任意消息
 3. 弹出目录浏览器 — 选择项目目录
-4. 自动创建 tmux 窗口，启动 `claude`，并转发待处理的消息
+4. 自动创建复用器窗口，启动 `claude`，并转发待处理的消息
 
 **发送消息：**
 
-话题绑定会话后，直接在话题中发送文字即可 — 文字会通过 tmux 按键转发给 Claude Code。
+话题绑定会话后，直接在话题中发送文字即可 — 文字会通过复用器按键转发给 Claude Code。
 
 **关闭会话：**
 
-在 Telegram 中关闭（或删除）话题，关联的 tmux 窗口会自动终止，绑定也会被移除。
+在 Telegram 中关闭（或删除）话题，关联的复用器窗口会自动终止，绑定也会被移除。
 
 ### 消息历史
 
@@ -173,7 +175,7 @@ uv run ccbot
 
 通知发送到绑定了该会话窗口的话题中。
 
-## 在 tmux 中运行 Claude Code
+## 运行 Claude Code
 
 ### 方式一：通过 Telegram 创建（推荐）
 
@@ -181,32 +183,44 @@ uv run ccbot
 2. 发送任意消息
 3. 从浏览器中选择项目目录
 
-### 方式二：手动创建
+### 方式二：手动创建（tmux）
 
 ```bash
 tmux attach -t ccbot
 tmux new-window -n myproject -c ~/Code/myproject
-# 在新窗口中启动 Claude Code
 claude
 ```
 
-窗口必须在 `ccbot` tmux 会话中（可通过 `TMUX_SESSION_NAME` 配置）。Claude 启动时 Hook 会自动将其注册到 `session_map.json`。
+### 方式三：手动创建（Zellij）
+
+```bash
+# 需要先创建 Zellij 会话
+zellij -s ccbot
+# 在另一个终端，或在会话内部：
+zellij --session ccbot action new-tab --name myproject --cwd ~/Code/myproject
+claude
+```
+
+窗口必须在配置的会话中（默认：`ccbot`，可通过 `MUX_SESSION_NAME` 配置）。Claude 启动时 Hook 会自动将其注册到 `session_map.json`。
+
+> **Zellij 限制：** 不支持 ANSI 颜色捕获（`/screenshot` 生成纯文本图片）。Zellij 会话必须在启动 Bot 之前创建（不支持无头创建会话）。
 
 ## 架构概览
 
 ```
 ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
 │  Topic ID   │ ───▶ │ Window Name │ ───▶ │ Session ID  │
-│  (Telegram) │      │   (tmux)    │      │  (Claude)   │
+│  (Telegram) │      │ (复用器窗口)│      │  (Claude)   │
 └─────────────┘      └─────────────┘      └─────────────┘
      thread_bindings      session_map.json
      (state.json)         (由 hook 写入)
 ```
 
 **核心设计思路：**
-- **话题为中心** — 每个 Telegram 话题绑定一个 tmux 窗口，话题就是会话列表
-- **窗口为中心** — 所有状态以 tmux 窗口名称为锚点（如 `myproject`），同一目录可有多个窗口（自动后缀：`myproject-2`）
-- **基于 Hook 的会话追踪** — Claude Code 的 `SessionStart` Hook 写入 `session_map.json`；监控器每次轮询读取它以自动检测会话变化
+- **话题为中心** — 每个 Telegram 话题绑定一个复用器窗口，话题就是会话列表
+- **窗口为中心** — 所有状态以窗口名称为锚点（如 `myproject`），同一目录可有多个窗口（自动后缀：`myproject-2`）。"窗口"是抽象术语（= tmux 窗口 = Zellij 标签页）
+- **可插拔复用器** — `MultiplexerBackend` ABC 支持 tmux 和 Zellij 后端；通过 `MULTIPLEXER` 环境变量选择
+- **基于 Hook 的会话追踪** — Claude Code 的 `SessionStart` Hook 自动检测复用器（tmux 或 Zellij）并写入 `session_map.json`；监控器每次轮询读取它以自动检测会话变化
 - **工具调用配对** — `tool_use_id` 跨轮询周期追踪；工具结果直接编辑原始的工具调用 Telegram 消息
 - **MarkdownV2 + 降级** — 所有消息通过 `telegramify-markdown` 转换，解析失败时降级为纯文本
 - **解析层不截断** — 完整保留内容；发送层按 Telegram 4096 字符限制拆分
@@ -216,7 +230,7 @@ claude
 | 路径 | 说明 |
 |---|---|
 | `~/.ccbot/state.json` | 话题绑定、窗口状态、每用户读取偏移量 |
-| `~/.ccbot/session_map.json` | Hook 生成的 `{tmux_session:window_name: {session_id, cwd}}` 映射 |
+| `~/.ccbot/session_map.json` | Hook 生成的 `{mux_session:window_name: {session_id, cwd}}` 映射 |
 | `~/.ccbot/monitor_state.json` | 每会话的监控字节偏移量（防止重复通知） |
 | `~/.claude/projects/` | Claude Code 会话数据（只读） |
 
@@ -238,7 +252,11 @@ src/ccbot/
 ├── telegram_sender.py     # 消息拆分 + 同步 HTTP 发送
 ├── screenshot.py          # 终端文字 → PNG 图片（支持 ANSI 颜色）
 ├── utils.py               # 通用工具（原子 JSON 写入、JSONL 辅助函数）
-├── tmux_manager.py        # tmux 窗口管理（列出、创建、发送按键、终止）
+├── multiplexer/           # 可插拔复用器后端
+│   ├── __init__.py        # get_mux() 单例工厂、导出
+│   ├── base.py            # MultiplexerBackend ABC + MuxWindow 数据类
+│   ├── tmux_backend.py    # TmuxBackend（libtmux，完整 ANSI 支持）
+│   └── zellij_backend.py  # ZellijBackend（CLI 子进程，仅纯文本）
 ├── fonts/                 # 截图渲染用字体
 └── handlers/
     ├── __init__.py        # Handler 模块导出

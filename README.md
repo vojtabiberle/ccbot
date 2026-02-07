@@ -2,7 +2,7 @@
 
 [中文文档](README_CN.md)
 
-Control Claude Code sessions remotely via Telegram — monitor, interact, and manage AI coding sessions running in tmux.
+Control Claude Code sessions remotely via Telegram — monitor, interact, and manage AI coding sessions running in tmux or Zellij.
 
 https://github.com/user-attachments/assets/15ffb38e-5eb9-4720-93b9-412e4961dc93
 
@@ -11,27 +11,28 @@ https://github.com/user-attachments/assets/15ffb38e-5eb9-4720-93b9-412e4961dc93
 
 Claude Code runs in your terminal. When you step away from your computer — commuting, on the couch, or just away from your desk — the session keeps working, but you lose visibility and control.
 
-CCBot solves this by letting you **seamlessly continue the same session from Telegram**. The key insight is that it operates on **tmux**, not the Claude Code SDK. Your Claude Code process stays exactly where it is, in a tmux window on your machine. CCBot simply reads its output and sends keystrokes to it. This means:
+CCBot solves this by letting you **seamlessly continue the same session from Telegram**. The key insight is that it operates on your **terminal multiplexer** (tmux or Zellij), not the Claude Code SDK. Your Claude Code process stays exactly where it is, in a multiplexer window on your machine. CCBot simply reads its output and sends keystrokes to it. This means:
 
 - **Switch from desktop to phone mid-conversation** — Claude is working on a refactor? Walk away, keep monitoring and responding from Telegram.
-- **Switch back to desktop anytime** — Since the tmux session was never interrupted, just `tmux attach` and you're back in the terminal with full scrollback and context.
-- **Run multiple sessions in parallel** — Each Telegram topic maps to a separate tmux window, so you can juggle multiple projects from one chat group.
+- **Switch back to desktop anytime** — Since the multiplexer session was never interrupted, just attach and you're back in the terminal with full scrollback and context.
+- **Run multiple sessions in parallel** — Each Telegram topic maps to a separate multiplexer window, so you can juggle multiple projects from one chat group.
 
-Other Telegram bots for Claude Code typically wrap the Claude Code SDK to create separate API sessions. Those sessions are isolated — you can't resume them in your terminal. CCBot takes a different approach: it's just a thin control layer over tmux, so the terminal remains the source of truth and you never lose the ability to switch back.
+Other Telegram bots for Claude Code typically wrap the Claude Code SDK to create separate API sessions. Those sessions are isolated — you can't resume them in your terminal. CCBot takes a different approach: it's just a thin control layer over your terminal multiplexer, so the terminal remains the source of truth and you never lose the ability to switch back.
 
 In fact, CCBot itself was built this way — iterating on itself through Claude Code sessions monitored and driven from Telegram via CCBot.
 
 ## Features
 
-- **Topic-based sessions** — Each Telegram topic maps 1:1 to a tmux window and Claude session
+- **Topic-based sessions** — Each Telegram topic maps 1:1 to a multiplexer window and Claude session
+- **Pluggable multiplexer** — Supports tmux (default) and Zellij backends
 - **Real-time notifications** — Get Telegram messages for assistant responses, thinking content, tool use/result, and local command output
 - **Interactive UI** — Navigate AskUserQuestion, ExitPlanMode, and Permission Prompts via inline keyboard
-- **Send messages** — Forward text to Claude Code via tmux keystrokes
+- **Send messages** — Forward text to Claude Code via multiplexer keystrokes
 - **Slash command forwarding** — Send any `/command` directly to Claude Code (e.g. `/clear`, `/compact`, `/cost`)
 - **Create new sessions** — Start Claude Code sessions from Telegram via directory browser
-- **Kill sessions** — Close a topic to auto-kill the associated tmux window
+- **Kill sessions** — Close a topic to auto-kill the associated multiplexer window
 - **Message history** — Browse conversation history with pagination (newest first)
-- **Hook-based session tracking** — Auto-associates tmux windows with Claude sessions via `SessionStart` hook
+- **Hook-based session tracking** — Auto-associates multiplexer windows with Claude sessions via `SessionStart` hook
 - **Persistent state** — Thread bindings and read offsets survive restarts
 
 ## Installation
@@ -67,7 +68,8 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |---|---|---|
-| `TMUX_SESSION_NAME` | `ccbot` | Tmux session name |
+| `MULTIPLEXER` | `tmux` | Multiplexer backend (`tmux` or `zellij`) |
+| `MUX_SESSION_NAME` | `ccbot` | Multiplexer session name (falls back to `TMUX_SESSION_NAME`) |
 | `CLAUDE_COMMAND` | `claude` | Command to run in new windows |
 | `MONITOR_POLL_INTERVAL` | `2.0` | Polling interval in seconds |
 
@@ -98,7 +100,7 @@ Or manually add to `~/.claude/settings.json`:
 }
 ```
 
-This writes window-session mappings to `~/.ccbot/session_map.json`, so the bot automatically tracks which Claude session is running in each tmux window — even after `/clear` or session restarts.
+This writes window-session mappings to `~/.ccbot/session_map.json`, so the bot automatically tracks which Claude session is running in each multiplexer window — even after `/clear` or session restarts. The hook auto-detects whether you're using tmux or Zellij.
 
 ## Usage
 
@@ -117,7 +119,7 @@ uv run ccbot
 | `/screenshot` | Capture terminal screenshot |
 | `/esc` | Send Escape to interrupt Claude |
 
-**Claude Code commands (forwarded via tmux):**
+**Claude Code commands (forwarded via multiplexer):**
 
 | Command | Description |
 |---|---|
@@ -138,15 +140,15 @@ Any unrecognized `/command` is also forwarded to Claude Code as-is (e.g. `/revie
 1. Create a new topic in the Telegram group
 2. Send any message in the topic
 3. A directory browser appears — select the project directory
-4. A tmux window is created, `claude` starts, and your pending message is forwarded
+4. A multiplexer window is created, `claude` starts, and your pending message is forwarded
 
 **Sending messages:**
 
-Once a topic is bound to a session, just send text in that topic — it gets forwarded to Claude Code via tmux keystrokes.
+Once a topic is bound to a session, just send text in that topic — it gets forwarded to Claude Code via multiplexer keystrokes.
 
 **Killing a session:**
 
-Close (or delete) the topic in Telegram. The associated tmux window is automatically killed and the binding is removed.
+Close (or delete) the topic in Telegram. The associated multiplexer window is automatically killed and the binding is removed.
 
 ### Message History
 
@@ -176,7 +178,7 @@ The monitor polls session JSONL files every 2 seconds and sends notifications fo
 
 Notifications are delivered to the topic bound to the session's window.
 
-## Running Claude Code in tmux
+## Running Claude Code
 
 ### Option 1: Create via Telegram (Recommended)
 
@@ -184,23 +186,34 @@ Notifications are delivered to the topic bound to the session's window.
 2. Send any message
 3. Select the project directory from the browser
 
-### Option 2: Create Manually
+### Option 2: Create Manually (tmux)
 
 ```bash
 tmux attach -t ccbot
 tmux new-window -n myproject -c ~/Code/myproject
-# Then start Claude Code in the new window
 claude
 ```
 
-The window must be in the `ccbot` tmux session (configurable via `TMUX_SESSION_NAME`). The hook will automatically register it in `session_map.json` when Claude starts.
+### Option 3: Create Manually (Zellij)
+
+```bash
+# Zellij session must be created first
+zellij -s ccbot
+# In another terminal, or from within the session:
+zellij --session ccbot action new-tab --name myproject --cwd ~/Code/myproject
+claude
+```
+
+The window must be in the configured session (default: `ccbot`, configurable via `MUX_SESSION_NAME`). The hook will automatically register it in `session_map.json` when Claude starts.
+
+> **Zellij limitations:** No ANSI color capture (`/screenshot` produces plain-text images). The Zellij session must be created before starting the bot (no headless session creation).
 
 ## Data Storage
 
 | Path | Description |
 |---|---|
 | `~/.ccbot/state.json` | Thread bindings, window states, and per-user read offsets |
-| `~/.ccbot/session_map.json` | Hook-generated `{tmux_session:window_name: {session_id, cwd}}` mappings |
+| `~/.ccbot/session_map.json` | Hook-generated `{mux_session:window_name: {session_id, cwd}}` mappings |
 | `~/.ccbot/monitor_state.json` | Monitor byte offsets per session (prevents duplicate notifications) |
 | `~/.claude/projects/` | Claude Code session data (read-only) |
 
@@ -222,7 +235,11 @@ src/ccbot/
 ├── telegram_sender.py     # Message splitting + synchronous HTTP send
 ├── screenshot.py          # Terminal text → PNG image with ANSI color support
 ├── utils.py               # Shared utilities (atomic JSON writes, JSONL helpers)
-├── tmux_manager.py        # Tmux window management (list, create, send keys, kill)
+├── multiplexer/           # Pluggable multiplexer backends
+│   ├── __init__.py        # get_mux() singleton factory, re-exports
+│   ├── base.py            # MultiplexerBackend ABC + MuxWindow dataclass
+│   ├── tmux_backend.py    # TmuxBackend (libtmux, full ANSI support)
+│   └── zellij_backend.py  # ZellijBackend (CLI subprocess, plain text only)
 ├── fonts/                 # Bundled fonts for screenshot rendering
 └── handlers/
     ├── __init__.py        # Handler module exports
