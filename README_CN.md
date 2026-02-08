@@ -27,6 +27,7 @@ CCBot 让你**通过 Telegram 无缝接管同一个会话**。核心设计思路
 - **发送消息** — 通过复用器按键将文字转发给 Claude Code
 - **斜杠命令转发** — 任何 `/command` 直接发送给 Claude Code（如 `/clear`、`/compact`、`/cost`）
 - **创建新会话** — 通过目录浏览器从 Telegram 启动 Claude Code 会话
+- **绑定已有窗口** — 通过 `/bind` 将已运行 Claude 的复用器窗口绑定到话题
 - **关闭会话** — 关闭话题自动终止关联的复用器窗口
 - **消息历史** — 分页浏览对话历史（默认显示最新）
 - **Hook 会话追踪** — 通过 `SessionStart` hook 自动关联复用器窗口与 Claude 会话
@@ -120,6 +121,8 @@ uv run ccbot
 | `/history` | 当前话题的消息历史 |
 | `/screenshot` | 截取终端屏幕 |
 | `/esc` | 发送 Escape 键中断 Claude |
+| `/bind` | 将已有复用器窗口绑定到当前话题 |
+| `/unbind` | 解绑窗口但不终止它 |
 
 **Claude Code 命令（通过复用器转发）：**
 
@@ -147,6 +150,10 @@ uv run ccbot
 **发送消息：**
 
 话题绑定会话后，直接在话题中发送文字即可 — 文字会通过复用器按键转发给 Claude Code。
+
+**绑定已有窗口：**
+
+如果你已经在复用器窗口中运行了 Claude，在话题中使用 `/bind` 即可绑定。Bot 会列出未绑定的窗口供你选择。使用 `/unbind` 可以解绑而不终止窗口。
 
 **关闭会话：**
 

@@ -30,6 +30,7 @@ In fact, CCBot itself was built this way — iterating on itself through Claude 
 - **Send messages** — Forward text to Claude Code via multiplexer keystrokes
 - **Slash command forwarding** — Send any `/command` directly to Claude Code (e.g. `/clear`, `/compact`, `/cost`)
 - **Create new sessions** — Start Claude Code sessions from Telegram via directory browser
+- **Bind existing windows** — Attach a pre-existing multiplexer window (where Claude is already running) to a topic via `/bind`
 - **Kill sessions** — Close a topic to auto-kill the associated multiplexer window
 - **Message history** — Browse conversation history with pagination (newest first)
 - **Hook-based session tracking** — Auto-associates multiplexer windows with Claude sessions via `SessionStart` hook
@@ -123,6 +124,8 @@ uv run ccbot
 | `/history` | Message history for this topic |
 | `/screenshot` | Capture terminal screenshot |
 | `/esc` | Send Escape to interrupt Claude |
+| `/bind` | Bind an existing multiplexer window to this topic |
+| `/unbind` | Unbind window from topic without killing it |
 
 **Claude Code commands (forwarded via multiplexer):**
 
@@ -150,6 +153,10 @@ Any unrecognized `/command` is also forwarded to Claude Code as-is (e.g. `/revie
 **Sending messages:**
 
 Once a topic is bound to a session, just send text in that topic — it gets forwarded to Claude Code via multiplexer keystrokes.
+
+**Binding an existing window:**
+
+If you already have Claude running in a multiplexer window, use `/bind` in a topic to attach it. The bot lists unbound windows and lets you pick one. Use `/unbind` to detach without killing the window.
 
 **Killing a session:**
 
