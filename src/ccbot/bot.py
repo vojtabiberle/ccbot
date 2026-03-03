@@ -72,12 +72,13 @@ from .handlers.callback_data import (
     CB_BIND_SELECT,
     CB_SUGGESTION_SEND,
 )
-from .handlers.repo_manager import (
-    callback_repo_handler,
-    cmd_repo,
-    cmd_repos,
-    cmd_wt,
-)
+if config.repo_manager_enabled:
+    from .handlers.repo_manager import (
+        callback_repo_handler,
+        cmd_repo,
+        cmd_repos,
+        cmd_wt,
+    )
 from .handlers.directory_browser import (
     BROWSE_DIRS_KEY,
     BROWSE_PAGE_KEY,
@@ -930,7 +931,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.answer("Bound")
 
     # Repo manager: all rm:* callbacks
-    elif data.startswith("rm:"):
+    elif config.repo_manager_enabled and data.startswith("rm:"):
         await callback_repo_handler(query, data, chat_id, update, context)
         return
 
@@ -1050,10 +1051,13 @@ async def post_init(application: Application) -> None:
         BotCommand("pathselect", "Browse directories for new session"),
         BotCommand("bind", "Bind existing window to this topic"),
         BotCommand("unbind", "Unbind window without killing it"),
-        BotCommand("repo", "Manage repos (add/update/status)"),
-        BotCommand("repos", "Browse repositories"),
-        BotCommand("wt", "Create worktree + Claude session"),
     ]
+    if config.repo_manager_enabled:
+        bot_commands.extend([
+            BotCommand("repo", "Manage repos (add/update/status)"),
+            BotCommand("repos", "Browse repositories"),
+            BotCommand("wt", "Create worktree + Claude session"),
+        ])
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
         bot_commands.append(BotCommand(cmd_name, desc))
@@ -1112,9 +1116,10 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("pathselect", pathselect_command))
     application.add_handler(CommandHandler("bind", bind_command))
     application.add_handler(CommandHandler("unbind", unbind_command))
-    application.add_handler(CommandHandler("repo", cmd_repo))
-    application.add_handler(CommandHandler("repos", cmd_repos))
-    application.add_handler(CommandHandler("wt", cmd_wt))
+    if config.repo_manager_enabled:
+        application.add_handler(CommandHandler("repo", cmd_repo))
+        application.add_handler(CommandHandler("repos", cmd_repos))
+        application.add_handler(CommandHandler("wt", cmd_wt))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(MessageHandler(

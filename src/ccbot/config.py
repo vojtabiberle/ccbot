@@ -81,7 +81,10 @@ class Config:
         # Starting path for /pathselect directory browser (default: bot cwd)
         self.browse_start_path: str = os.getenv("BROWSE_START_PATH", "")
 
-        # repo-manager CLI command
+        # repo-manager integration (disabled by default)
+        self.repo_manager_enabled: bool = os.getenv(
+            "REPO_MANAGER_ENABLED", "false",
+        ).lower() in ("true", "1", "yes")
         self.repo_manager_cmd: str = os.getenv("REPO_MANAGER_CMD", "repo-manager")
 
         logger.debug(
