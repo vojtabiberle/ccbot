@@ -41,3 +41,14 @@ CB_SUGGESTION_SEND = "sg:send:"  # sg:send:<window_name>
 # Bind existing window
 CB_BIND_SELECT = "bd:sel:"  # bd:sel:<window_name>
 
+# Repo manager
+CB_REPO_LIST = "rm:list"       # Show repo list (browser root)
+CB_REPO_SELECT = "rm:sel:"     # Select a repo (payload: repo name)
+CB_REPO_STATUS = "rm:st:"      # Show status (payload: repo name)
+CB_REPO_UPDATE = "rm:up:"      # Update repo (payload: repo name)
+CB_REPO_WTLIST = "rm:wt:"      # Show worktrees (payload: repo name)
+CB_REPO_WTNEW = "rm:wn:"       # New worktree prompt (payload: repo name)
+CB_REPO_WTSTART = "rm:ws:"     # Start Claude in worktree (payload: path encoded)
+CB_REPO_PAGE = "rm:pg:"        # Pagination (payload: page number)
+CB_REPO_BACK = "rm:back"       # Back to repo list
+

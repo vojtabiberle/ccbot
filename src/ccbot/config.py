@@ -81,6 +81,9 @@ class Config:
         # Starting path for /pathselect directory browser (default: bot cwd)
         self.browse_start_path: str = os.getenv("BROWSE_START_PATH", "")
 
+        # repo-manager CLI command
+        self.repo_manager_cmd: str = os.getenv("REPO_MANAGER_CMD", "repo-manager")
+
         logger.debug(
             "Config initialized: token=%s..., allowed_users=%d, "
             "multiplexer=%s, session=%s, state=%s",
